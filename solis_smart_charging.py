@@ -56,6 +56,55 @@ def control_body(inverterId, chargeSettings) -> str:
             body = body+","
     return body+'"}'
 
+def is_contiguous_with_core_hours(block_start, block_end, core_window=None):
+    """
+    Check if a time block is contiguous with core hours.
+    Returns (bool, position) where position is 'before', 'after', or None.
+    """
+    if core_window is None:
+        core_start_time = "23:30"
+        core_end_time = "05:30"
+    else:
+        core_start_time = core_window["chargeStartTime"]
+        core_end_time = core_window["chargeEndTime"]
+    
+    core_start_hour, core_start_minute = map(int, core_start_time.split(":"))
+    core_end_hour, core_end_minute = map(int, core_end_time.split(":"))
+    
+    # Normalize all times to remove seconds and microseconds
+    block_start = block_start.replace(second=0, microsecond=0)
+    block_end = block_end.replace(second=0, microsecond=0)
+    
+    core_start = block_start.replace(hour=core_start_hour, minute=core_start_minute, 
+                                    second=0, microsecond=0)
+    if core_start > block_start:
+        core_start -= timedelta(days=1)
+        
+    core_end = block_start.replace(hour=core_end_hour, minute=core_end_minute, 
+                                    second=0, microsecond=0)
+    if core_start > core_end:
+        core_end += timedelta(days=1)
+    
+    # Block ends at or within 30 minutes before core start
+    if (block_end >= core_start - timedelta(minutes=30) and 
+        block_end <= core_start + timedelta(minutes=1)):
+        return True, 'before'
+    
+    # Block starts at or within 30 minutes after core end
+    if (block_start <= core_end + timedelta(minutes=30) and 
+        block_start >= core_end - timedelta(minutes=1)):
+        return True, 'after'
+    
+    # If the block overlaps core hours, consider it part of core hours
+    if overlaps_core_hours(block_start, block_end, core_window):
+        if block_start < core_start:
+            return True, 'before'
+        elif block_end > core_end:
+            return True, 'after'
+    
+    return False, None
+
+
 def overlaps_core_hours(check_start, check_end, core_window=None):
     """
     Check if a time period overlaps with core hours, considering dynamic core hours.
@@ -64,75 +113,31 @@ def overlaps_core_hours(check_start, check_end, core_window=None):
         core_start_time = "23:30"
         core_end_time = "05:30"
     else:
-        # Ensure core window doesn't shrink past minimum
-        core_start_time = max(core_window["chargeStartTime"], "23:30")
-        core_end_time = min(core_window["chargeEndTime"], "05:30")
-    
-    core_start_hour, core_start_minute = map(int, core_start_time.split(':'))
-    core_end_hour, core_end_minute = map(int, core_end_time.split(':'))
-    
-    # Create base datetime for comparison
-    base_date = check_start.date()
-    
-    # Create core start/end times
-    core_start = datetime.combine(base_date, 
-                                time(hour=core_start_hour, minute=core_start_minute))
-    core_end = datetime.combine(base_date, 
-                                time(hour=core_end_hour, minute=core_end_minute))
-    
-    # Adjust for overnight periods
-    if core_start_hour > core_end_hour or (core_start_hour == core_end_hour and core_start_minute > core_end_minute):
-        if check_start.time() < time(hour=core_end_hour, minute=core_end_minute):
-            core_start = core_start - timedelta(days=1)
-        else:
-            core_end = core_end + timedelta(days=1)
-    
-    return (check_start < core_end and check_end > core_start)
-
-def is_contiguous_with_core_hours(block_start, block_end, core_window=None):
-    """
-    Check if a time block is contiguous with core hours.
-    Handles Solis requirement that windows cannot start and end at the same time.
-    Returns (bool, position) where position is 'before', 'after', or None.
-    """
-    if core_window is None:
-        core_start_time = "23:30"
-        core_end_time = "05:30"
-    else:
-        # Ensure core window doesn't shrink past minimum
-        core_start_time = max(core_window["chargeStartTime"], "23:30")
-        core_end_time = min(core_window["chargeEndTime"], "05:30")
+        core_start_time = core_window["chargeStartTime"]
+        core_end_time = core_window["chargeEndTime"]
     
     core_start_hour, core_start_minute = map(int, core_start_time.split(":"))
     core_end_hour, core_end_minute = map(int, core_end_time.split(":"))
     
-    # Create base datetime for comparison
-    base_date = block_start.date()
-    core_start = datetime.combine(base_date, 
-                                time(hour=core_start_hour, minute=core_start_minute))
-    core_end = datetime.combine(base_date, 
-                                time(hour=core_end_hour, minute=core_end_minute))
+    core_start = check_start.replace(hour=core_start_hour, minute=core_start_minute, 
+                                    second=0, microsecond=0)
+    if core_start > check_start:
+        core_start -= timedelta(days=1)
+        
+    core_end = check_start.replace(hour=core_end_hour, minute=core_end_minute, 
+                                    second=0, microsecond=0)
+    if core_start > core_end:
+        core_end += timedelta(days=1)
     
-    # Adjust for overnight periods
-    if core_start_hour > core_end_hour or (core_start_hour == core_end_hour and core_start_minute > core_end_minute):
-        if block_start.time() < time(hour=core_end_hour, minute=core_end_minute):
-            core_start = core_start - timedelta(days=1)
-        else:
-            core_end = core_end + timedelta(days=1)
-    
-    # Round times appropriately
-    block_start_rounded = round_to_half_hour(block_start, False)
-    block_end_rounded = round_to_half_hour(block_end, True)  # Always round up
-    
-    # Block ends at core start (consider it 'before' core)
-    if abs((block_end_rounded - core_start).total_seconds()) <= 60:
-        return True, 'before'
-    
-    # Block starts at core end (consider it 'after' core)
-    if abs((block_start_rounded - core_end).total_seconds()) <= 60:
-        return True, 'after'
-    
-    return False, None
+    return (check_start <= core_end and check_end >= core_start)
+        
+    # Now check for overlap
+    return (
+        (core_start <= check_start < core_end) or  # Start falls in core hours
+        (core_start < check_end <= core_end) or    # End falls in core hours
+        (check_start <= core_start and 
+        check_end >= core_end)  # Surrounds core hours
+    )
 
 def find_contiguous_blocks(dispatches):
     """Find contiguous charging blocks from dispatch windows."""
@@ -154,13 +159,9 @@ def find_contiguous_blocks(dispatches):
         if charge <= 0:
             continue
             
-        # Round the times appropriately
-        start_rounded = round_to_half_hour(dispatch['start'], False)
-        end_rounded = round_to_half_hour(dispatch['end'], True)  # Always round up
-            
         block = {
-            'start': start_rounded,
-            'end': end_rounded,
+            'start': dispatch['start'],
+            'end': dispatch['end'],
             'total_charge': charge
         }
         
@@ -183,11 +184,11 @@ def find_contiguous_blocks(dispatches):
     for block in result_blocks:
         if 'contiguous_position' in block:
             if block['contiguous_position'] == 'before':
-                new_start = block['start'].strftime("%H:%M")
+                new_start = round_to_half_hour(block['start']).strftime("%H:%M")
                 if time_earlier_than(new_start, earliest_start):
                     earliest_start = new_start
             elif block['contiguous_position'] == 'after':
-                new_end = block['end'].strftime("%H:%M")  # Using rounded up end time
+                new_end = round_to_half_hour(block['end'], is_end_time=True).strftime("%H:%M")
                 if time_later_than(new_end, latest_end):
                     latest_end = new_end
     
@@ -200,12 +201,9 @@ def find_contiguous_blocks(dispatches):
         if charge <= 0:
             continue
             
-        start_rounded = round_to_half_hour(dispatch['start'], False)
-        end_rounded = round_to_half_hour(dispatch['end'], True)  # Always round up
-            
         block = {
-            'start': start_rounded,
-            'end': end_rounded,
+            'start': dispatch['start'],
+            'end': dispatch['end'],
             'total_charge': charge
         }
         
@@ -229,21 +227,17 @@ def find_contiguous_blocks(dispatches):
     return result_blocks
 
 def round_to_half_hour(dt, is_end_time=False):
-    """
-    Round datetime to nearest 30-minute interval.
-    Start times round down, end times ALWAYS round up to next 30-minute interval.
-    """
+    """Round datetime to nearest 30-minute interval. For end times, always round up."""
     if is_end_time:
-        # For end times, ALWAYS round up to next 30 min interval
+        # For end times, if there are any minutes, round up to next 30 min interval
         if dt.minute > 0:
             if dt.minute <= 30:
                 return dt.replace(minute=30, second=0, microsecond=0)
             else:
-                next_hour = dt + timedelta(hours=1)
-                return next_hour.replace(minute=0, second=0, microsecond=0)
+                return dt.replace(hour=dt.hour + 1, minute=0, second=0, microsecond=0)
         return dt.replace(minute=0, second=0, microsecond=0)
     else:
-        # For start times, round down to the previous 30-minute mark
+        # For start times, keep existing rounding logic
         if dt.minute >= 30:
             return dt.replace(minute=30, second=0, microsecond=0)
         return dt.replace(minute=0, second=0, microsecond=0)
