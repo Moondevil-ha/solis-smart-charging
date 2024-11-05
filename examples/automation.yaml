@@ -1,0 +1,32 @@
+alias: Sync Solis Charging with Octopus Dispatch
+description: ""
+triggers:
+  - trigger: state
+    entity_id:
+      - binary_sensor.octopus_energy_intelligent_dispatching
+    attribute: planned_dispatches
+  - trigger: time_pattern
+    minutes: "30"
+conditions:
+  - condition: template
+    value_template: >
+      {% set dispatches =
+      state_attr('binary_sensor.octopus_energy_intelligent_dispatching',
+      'planned_dispatches') %} {% if dispatches is none %}
+        {% set result = false %}
+      {% else %}
+        {% set result = true %}
+      {% endif %} {{ result }}
+actions:
+  - action: pyscript.solis_smart_charging
+    metadata: {}
+    data:
+      config: |-
+        {
+          "secret": "{{ states('input_text.solis_api_secret') }}",
+          "key_id": "{{ states('input_text.solis_api_key') }}",
+          "username": "{{ states('input_text.solis_username') }}",
+          "password": "{{ states('input_text.solis_password') }}",
+          "plantId": "{{ states('input_text.solis_plant_id') }}"
+        }
+mode: single
