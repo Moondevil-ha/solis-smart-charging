@@ -1,3 +1,19 @@
+# Home Assistant
+*.pid
+*.xml
+*.csr
+*.crt
+*.key
+*.conf
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.backup
+.storage
+.cloud
+.google.token
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
