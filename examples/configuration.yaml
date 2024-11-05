@@ -1,0 +1,21 @@
+#Additions to configuration.yaml
+pyscript:
+  allow_all_imports: true
+  hass_is_global: true
+
+input_text:
+  solis_api_secret:
+    name: Solis API Secret
+    initial: !secret solis_api_secret
+  solis_api_key:
+    name: Solis API Key
+    initial: !secret solis_api_key
+  solis_username:
+    name: Solis Username
+    initial: !secret solis_username
+  solis_password:
+    name: Solis Password
+    initial: !secret solis_password
+  solis_plant_id:
+    name: Solis Plant ID
+    initial: !secret solis_plant_id
