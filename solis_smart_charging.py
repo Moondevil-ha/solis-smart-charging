@@ -90,9 +90,11 @@ def is_contiguous_with_core_hours(block_start, block_end, core_window=None):
         block_end <= core_start + timedelta(minutes=1)):
         return True, 'before'
     
-    # Block starts at or within 30 minutes after core end
-    if (block_start <= core_end + timedelta(minutes=30) and 
-        block_start >= core_end - timedelta(minutes=1)):
+    # Block starts within 29 minutes after core end (making it part of the same 30-min slot)
+    # We use 29 minutes because a window starting at exactly 30 minutes after
+    # should be treated as a new window to align with electricity pricing slots
+    if (block_start >= core_end and 
+        block_start < core_end + timedelta(minutes=29)):
         return True, 'after'
     
     # If the block overlaps core hours, consider it part of core hours
