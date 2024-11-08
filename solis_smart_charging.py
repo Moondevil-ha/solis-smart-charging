@@ -123,8 +123,8 @@ def overlaps_core_hours(check_start, check_end, core_window=None):
     
     core_start = check_start.replace(hour=core_start_hour, minute=core_start_minute, 
                                     second=0, microsecond=0)
-    if core_start > check_start:
-        core_start -= timedelta(days=1)
+#    if core_start > check_start:
+#        core_start -= timedelta(days=1)
         
     core_end = check_start.replace(hour=core_end_hour, minute=core_end_minute, 
                                     second=0, microsecond=0)
