@@ -1,5 +1,7 @@
 # Solis Smart Charging for Home Assistant
 
+***NOTE Major change in processing being evaluated. Release pending***
+
 This integration synchronizes Solis inverter charging windows with Octopus Energy Intelligent dispatch periods in Home Assistant. It automatically adjusts your battery charging schedule to maximize the use of cheaper electricity during dispatch periods while maintaining core charging hours.
 
 Code has been utilised from https://github.com/stevegal/solis_control for the API calls to SolisCloud performing the actual programming.
