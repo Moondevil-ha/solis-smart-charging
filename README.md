@@ -1,7 +1,5 @@
 # Solis Smart Charging for Home Assistant
 
-***NOTE Major change in processing being evaluated. Release pending***
-
 This integration synchronizes Solis inverter charging windows with Octopus Energy Intelligent dispatch periods in Home Assistant. It automatically adjusts your battery charging schedule to maximize the use of cheaper electricity during dispatch periods while maintaining core charging hours.
 
 Code has been utilised from https://github.com/stevegal/solis_control for the API calls to SolisCloud performing the actual programming.
@@ -9,11 +7,16 @@ Code has been utilised from https://github.com/stevegal/solis_control for the AP
 ## Features
 
 - Automatically syncs Solis inverter charging windows with Octopus Energy Intelligent dispatch periods
-- Maintains core charging hours (default 23:30-05:30)
+- Maintains protected core charging hours (23:30-05:30)
 - Supports up to three charging windows (Solis limitation)
-- Prioritizes dispatch periods by charging volume
-- Extends core charging window when dispatch periods are contiguous
-- Handles time rounding to meet Solis 30-minute interval requirements
+- Smart charging window management:
+  - Automatically detects and merges contiguous charging blocks
+  - Extends core hours when dispatch periods are adjacent
+  - Prioritizes windows based on available charge amount
+- Robust time handling:
+  - All times normalized to 30-minute slots
+  - Proper handling of overnight periods
+  - Clean management of time boundaries
 
 ## Prerequisites
 
@@ -105,12 +108,13 @@ mode: single
 
 1. The script monitors Octopus Energy Intelligent dispatch periods
 2. When dispatch periods are updated:
-   - Core charging hours (23:30-05:30) are maintained
-   - Additional dispatch periods are prioritized by charging volume
-   - Up to two additional charging windows are created
-   - If dispatch periods are contiguous with core hours, the core window is extended
-3. Charging windows are synchronized to your Solis inverter
-4. The process repeats when dispatch periods change
+   - Core charging hours (23:30-05:30) are protected and cannot be reduced
+   - The script identifies contiguous charging blocks and merges them
+   - Core hours are extended if dispatch periods are adjacent
+   - Additional charging windows are selected based on available charge amount
+   - All times are normalized to 30-minute slots
+3. The resulting charging windows are synchronized to your Solis inverter
+4. The process repeats when new dispatch periods are received
 
 ## Obtaining Solis API Credentials
 
