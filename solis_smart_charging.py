@@ -16,7 +16,7 @@ LOGIN_URL = '/v2/api/login'
 CONTROL_URL= '/v2/api/control'
 INVERTER_URL= '/v1/api/inverterList'
 
-# Helper functions
+# SolisCloud API Helper Functions - Unchanged
 def digest(body: str) -> str:
     return base64.b64encode(hashlib.md5(body.encode('utf-8')).digest()).decode('utf-8')
 
@@ -55,195 +55,7 @@ def control_body(inverterId, chargeSettings) -> str:
         if (index != 2):
             body = body+","
     return body+'"}'
-
-def is_contiguous_with_core_hours(block_start, block_end, core_window=None):
-    """
-    Check if a time block is contiguous with core hours.
-    Returns (bool, position) where position is 'before', 'after', or None.
-    """
-    if core_window is None:
-        core_start_time = "23:30"
-        core_end_time = "05:30"
-    else:
-        core_start_time = core_window["chargeStartTime"]
-        core_end_time = core_window["chargeEndTime"]
-    
-    core_start_hour, core_start_minute = map(int, core_start_time.split(":"))
-    core_end_hour, core_end_minute = map(int, core_end_time.split(":"))
-    
-    # Normalize all times to remove seconds and microseconds
-    block_start = block_start.replace(second=0, microsecond=0)
-    block_end = block_end.replace(second=0, microsecond=0)
-    
-    core_start = block_start.replace(hour=core_start_hour, minute=core_start_minute, 
-                                    second=0, microsecond=0)
-    if core_start > block_start:
-        core_start -= timedelta(days=1)
-        
-    core_end = block_start.replace(hour=core_end_hour, minute=core_end_minute, 
-                                    second=0, microsecond=0)
-    if core_start > core_end:
-        core_end += timedelta(days=1)
-    
-    # Block ends at or within 30 minutes before core start
-    if (block_end >= core_start - timedelta(minutes=30) and 
-        block_end <= core_start + timedelta(minutes=1)):
-        return True, 'before'
-    
-    # Block starts within 29 minutes after core end (making it part of the same 30-min slot)
-    # We use 29 minutes because a window starting at exactly 30 minutes after
-    # should be treated as a new window to align with electricity pricing slots
-    if (block_start >= core_end and 
-        block_start < core_end + timedelta(minutes=29)):
-        return True, 'after'
-    
-    # If the block overlaps core hours, consider it part of core hours
-    if overlaps_core_hours(block_start, block_end, core_window):
-        if block_start < core_start:
-            return True, 'before'
-        elif block_end > core_end:
-            return True, 'after'
-    
-    return False, None
-
-
-def overlaps_core_hours(check_start, check_end, core_window=None):
-    """
-    Check if a time period overlaps with core hours, considering dynamic core hours.
-    """
-    if core_window is None:
-        core_start_time = "23:30"
-        core_end_time = "05:30"
-    else:
-        core_start_time = core_window["chargeStartTime"]
-        core_end_time = core_window["chargeEndTime"]
-    
-    core_start_hour, core_start_minute = map(int, core_start_time.split(":"))
-    core_end_hour, core_end_minute = map(int, core_end_time.split(":"))
-    
-    core_start = check_start.replace(hour=core_start_hour, minute=core_start_minute, 
-                                    second=0, microsecond=0)
-#    if core_start > check_start:
-#        core_start -= timedelta(days=1)
-        
-    core_end = check_start.replace(hour=core_end_hour, minute=core_end_minute, 
-                                    second=0, microsecond=0)
-    if core_start > core_end:
-        core_end += timedelta(days=1)
-    
-    return (check_start <= core_end and check_end >= core_start)
-        
-    # Now check for overlap
-    return (
-        (core_start <= check_start < core_end) or  # Start falls in core hours
-        (core_start < check_end <= core_end) or    # End falls in core hours
-        (check_start <= core_start and 
-        check_end >= core_end)  # Surrounds core hours
-    )
-
-def find_contiguous_blocks(dispatches):
-    """Find contiguous charging blocks from dispatch windows."""
-    if not dispatches:
-        return []
-    
-    result_blocks = []
-    sorted_dispatches = sorted(dispatches, key=lambda x: x['start'])
-    
-    # Initialize reference core window
-    reference_core_window = {
-        "chargeStartTime": "23:30",
-        "chargeEndTime": "05:30"
-    }
-    
-    # First pass - identify all contiguous blocks
-    for dispatch in sorted_dispatches:
-        charge = abs(float(dispatch.get('charge_in_kwh', 0)))
-        if charge <= 0:
-            continue
-            
-        block = {
-            'start': dispatch['start'],
-            'end': dispatch['end'],
-            'total_charge': charge
-        }
-        
-        # Check against reference core window
-        is_contiguous, position = is_contiguous_with_core_hours(
-            block['start'], 
-            block['end'], 
-            reference_core_window
-        )
-        
-        if is_contiguous:
-            block['contiguous_position'] = position
-            result_blocks.append(block)
-    
-    # Calculate final core window
-    final_core_window = reference_core_window.copy()
-    earliest_start = final_core_window["chargeStartTime"]
-    latest_end = final_core_window["chargeEndTime"]
-    
-    for block in result_blocks:
-        if 'contiguous_position' in block:
-            if block['contiguous_position'] == 'before':
-                new_start = round_to_half_hour(block['start']).strftime("%H:%M")
-                if time_earlier_than(new_start, earliest_start):
-                    earliest_start = new_start
-            elif block['contiguous_position'] == 'after':
-                new_end = round_to_half_hour(block['end'], is_end_time=True).strftime("%H:%M")
-                if time_later_than(new_end, latest_end):
-                    latest_end = new_end
-    
-    final_core_window["chargeStartTime"] = earliest_start
-    final_core_window["chargeEndTime"] = latest_end
-    
-    # Second pass - process non-contiguous blocks
-    for dispatch in sorted_dispatches:
-        charge = abs(float(dispatch.get('charge_in_kwh', 0)))
-        if charge <= 0:
-            continue
-            
-        block = {
-            'start': dispatch['start'],
-            'end': dispatch['end'],
-            'total_charge': charge
-        }
-        
-        # Skip if already processed as contiguous
-        already_exists = False
-        for existing in result_blocks:
-            if (existing['start'] == block['start'] and 
-                existing['end'] == block['end']):
-                already_exists = True
-                break
-                
-        if already_exists:
-            continue
-            
-        # Skip if overlaps with final extended core window
-        if overlaps_core_hours(block['start'], block['end'], final_core_window):
-            continue
-            
-        result_blocks.append(block)
-    
-    return result_blocks
-
-def round_to_half_hour(dt, is_end_time=False):
-    """Round datetime to nearest 30-minute interval. For end times, always round up."""
-    if is_end_time:
-        # For end times, if there are any minutes, round up to next 30 min interval
-        if dt.minute > 0:
-            if dt.minute <= 30:
-                return dt.replace(minute=30, second=0, microsecond=0)
-            else:
-                return dt.replace(hour=dt.hour + 1, minute=0, second=0, microsecond=0)
-        return dt.replace(minute=0, second=0, microsecond=0)
-    else:
-        # For start times, keep existing rounding logic
-        if dt.minute >= 30:
-            return dt.replace(minute=30, second=0, microsecond=0)
-        return dt.replace(minute=0, second=0, microsecond=0)
-
+# Time handling helper functions
 def time_earlier_than(time1, time2):
     """Compare two time strings in HH:MM format."""
     h1, m1 = map(int, time1.split(':'))
@@ -255,6 +67,379 @@ def time_later_than(time1, time2):
     h1, m1 = map(int, time1.split(':'))
     h2, m2 = map(int, time2.split(':'))
     return h1 > h2 or (h1 == h2 and m1 > m2)
+
+# Dispatch normalization functions
+def normalize_dispatch_window(dispatch):
+    """
+    Normalizes a dispatch window to exact 30-minute slots.
+    Maintains all original dispatch data, only adjusting timestamps.
+    
+    Args:
+        dispatch: Dictionary containing 'start' and 'end' datetime objects
+        from Octopus dispatch data
+    
+    Returns:
+        Dictionary with normalized start/end times aligned to 30-min slots
+    """
+    def round_to_slot(dt, round_up=False):
+        """
+        Rounds datetime to nearest 30-minute slot.
+        For start times rounds down, for end times rounds up to ensure
+        we capture full charging window.
+        """
+        minute = dt.minute
+        if round_up:
+            # For end times, round up to next 30-min slot
+            if minute > 0:
+                if minute <= 30:
+                    return dt.replace(minute=30, second=0, microsecond=0)
+                else:
+                    return dt.replace(hour=dt.hour + 1, minute=0, second=0, microsecond=0)
+        else:
+            # For start times, round down to previous 30-min slot
+            if minute >= 30:
+                return dt.replace(minute=30, second=0, microsecond=0)
+            return dt.replace(minute=0, second=0, microsecond=0)
+        return dt.replace(second=0, microsecond=0)
+    
+    normalized = dispatch.copy()
+    normalized['start'] = round_to_slot(dispatch['start'])
+    normalized['end'] = round_to_slot(dispatch['end'], round_up=True)
+    return normalized
+
+def normalize_dispatches(dispatches):
+    """
+    Normalizes all dispatch windows and sorts them chronologically.
+    Every dispatch window represents a valid charging opportunity.
+    
+    Args:
+        dispatches: List of dispatch dictionaries from Octopus API
+        
+    Returns:
+        List of normalized dispatch dictionaries sorted by start time
+    """
+    normalized = [normalize_dispatch_window(dispatch) for dispatch in dispatches]
+    return sorted(normalized, key=lambda x: x['start'])
+
+def merge_dispatch_windows(normalized_dispatches):
+    """
+    Merges normalized dispatch windows that are exactly contiguous.
+    Windows must be pre-normalized to 30-minute slots.
+    
+    Args:
+        normalized_dispatches: List of dispatch dictionaries with 
+        normalized 30-minute slot timestamps,
+        sorted chronologically
+    
+    Returns:
+        List of merged dispatch windows, each dictionary containing:
+        - start: datetime of window start
+        - end: datetime of window end
+        - duration_minutes: length of window in minutes
+        - windows_merged: count of original windows combined
+    """
+    if not normalized_dispatches:
+        return []
+    
+    merged = []
+    current_window = {
+        'start': normalized_dispatches[0]['start'],
+        'end': normalized_dispatches[0]['end'],
+        'windows_merged': 1
+    }
+    
+    for dispatch in normalized_dispatches[1:]:
+        # If this window starts exactly when current window ends
+        if dispatch['start'] == current_window['end']:
+            # Extend current window
+            current_window['end'] = dispatch['end']
+            current_window['windows_merged'] += 1
+        else:
+            # Calculate duration before storing
+            duration = (current_window['end'] - current_window['start']).total_seconds() / 60
+            current_window['duration_minutes'] = duration
+            
+            # Store the completed window
+            merged.append(current_window)
+            
+            # Start a new window
+            current_window = {
+                'start': dispatch['start'],
+                'end': dispatch['end'],
+                'windows_merged': 1
+            }
+    
+    # Add the final window
+    duration = (current_window['end'] - current_window['start']).total_seconds() / 60
+    current_window['duration_minutes'] = duration
+    merged.append(current_window)
+    
+    return merged
+def is_window_contiguous(window, core_start, core_end):
+    """
+    Checks if a window is contiguous with core hours.
+    All times must be normalized to 30-minute slots.
+    
+    Args:
+        window: Dictionary with 'start' and 'end' datetimes
+        core_start: String "HH:MM" core hours start time
+        core_end: String "HH:MM" core hours end time
+        
+    Returns:
+        Tuple (bool, str): (is_contiguous, position)
+        position is either 'before', 'after', or None
+    """
+    # Convert core hours to datetime objects on same day as window
+    core_start_hour, core_start_minute = map(int, core_start.split(':'))
+    core_end_hour, core_end_minute = map(int, core_end.split(':'))
+    
+    core_start_time = window['start'].replace(
+        hour=core_start_hour, 
+        minute=core_start_minute, 
+        second=0, 
+        microsecond=0
+    )
+    
+    core_end_time = window['start'].replace(
+        hour=core_end_hour, 
+        minute=core_end_minute, 
+        second=0, 
+        microsecond=0
+    )
+    
+    # Adjust for overnight core hours
+    if core_start_time > core_end_time:
+        if window['start'].hour < core_end_hour or window['start'].hour >= core_start_hour:
+            core_end_time += timedelta(days=1)
+    
+    # Check if window is contiguous before core hours
+    if window['end'] == core_start_time:
+        return True, 'before'
+        
+    # Check if window is contiguous after core hours
+    if window['start'] == core_end_time:
+        return True, 'after'
+    
+    return False, None
+
+def does_window_overlap_core(window, core_start, core_end):
+    """
+    Checks if a window overlaps with core hours.
+    All times must be normalized to 30-minute slots.
+    
+    Args:
+        window: Dictionary with 'start' and 'end' datetimes
+        core_start: String "HH:MM" core start time
+        core_end: String "HH:MM" core end time
+    
+    Returns:
+        bool: True if window overlaps core hours
+    """
+    window_start = window['start'].strftime("%H:%M")
+    window_end = window['end'].strftime("%H:%M")
+    
+    # Handle overnight core period
+    if time_earlier_than(core_end, core_start):
+        # Core period crosses midnight
+        return (not (time_earlier_than(window_end, core_start) and 
+                    time_later_than(window_start, core_end)))
+    else:
+        # Core period within same day
+        return (not (time_earlier_than(window_end, core_start) or 
+                    time_later_than(window_start, core_end)))
+
+def process_core_hours(merged_windows, core_start="23:30", core_end="05:30"):
+    """
+    Processes merged windows against core hours, identifying windows that extend
+    the core charging period and separating out independent windows.
+    
+    All windows must be pre-normalized to 30-minute slots.
+    
+    Args:
+        merged_windows: List of merged dispatch window dictionaries
+        core_start: String "HH:MM" default core hours start time
+        core_end: String "HH:MM" default core hours end time
+        
+    Returns:
+        Tuple containing:
+        - Dictionary with final core window details including extended times
+        - List of remaining independent charging windows
+    """
+    # Initialize extended core window times
+    extended_core = {
+        'start': core_start,
+        'end': core_end
+    }
+    
+    independent_windows = []
+    
+    # First pass: identify windows that extend core hours
+    for window in merged_windows:
+        is_contiguous, position = is_window_contiguous(window, 
+            extended_core['start'],
+            extended_core['end'])
+        
+        window_start = window['start'].strftime("%H:%M")
+        window_end = window['end'].strftime("%H:%M")
+        
+        if is_contiguous:
+            if position == 'before':
+                # Extend core start time if window starts earlier
+                if time_earlier_than(window_start, extended_core['start']):
+                    extended_core['start'] = window_start
+            elif position == 'after':
+                # Extend core end time if window ends later
+                if time_later_than(window_end, extended_core['end']):
+                    extended_core['end'] = window_end
+        else:
+            # Check if window overlaps core hours
+            overlaps = does_window_overlap_core(window, 
+                extended_core['start'],
+                extended_core['end'])
+            if not overlaps:
+                independent_windows.append(window)
+    
+    # Calculate final core window duration
+    core_window = {
+        'start': extended_core['start'],
+        'end': extended_core['end'],
+        'type': 'core',
+        'duration_minutes': calculate_window_duration(
+            extended_core['start'],
+            extended_core['end']
+        )
+    }
+    
+    return core_window, independent_windows
+
+def calculate_window_duration(start_time, end_time):
+    """
+    Calculates duration in minutes between two HH:MM times,
+    handling overnight windows correctly.
+    
+    Args:
+        start_time: String "HH:MM"
+        end_time: String "HH:MM"
+    
+    Returns:
+        int: Duration in minutes
+    """
+    start_hour, start_minute = map(int, start_time.split(':'))
+    end_hour, end_minute = map(int, end_time.split(':'))
+    
+    minutes = ((end_hour - start_hour) * 60 + (end_minute - start_minute))
+    if minutes < 0:  # Overnight window
+        minutes += 24 * 60
+        
+    return minutes
+def select_additional_windows(independent_windows, core_window):
+    """
+    Selects additional charging windows based on:
+    1. Window duration (longer windows preferred)
+    2. Proximity to core start (closer to core start preferred as battery 
+        more likely to need charging)
+    
+    Args:
+        independent_windows: List of window dictionaries not overlapping/contiguous 
+        with core hours
+        core_window: Dictionary containing core window details including 
+                    'start' time
+    
+    Returns:
+        List of up to 2 selected windows, ordered by start time
+    """
+    if not independent_windows:
+        return []
+        
+    def calculate_window_score(window):
+        """
+        Scores a window based on duration and proximity to core start.
+        Duration weighted more heavily (0.7) than proximity (0.3)
+        """
+        # Find the time difference to core start in minutes
+        window_end = window['end']
+        core_start_time = datetime.strptime(core_window['start'], "%H:%M").time()
+        core_start_dt = datetime.combine(window_end.date(), core_start_time)
+        
+        # Adjust core start if needed to handle overnight comparisons
+        if core_start_dt < window_end:
+            core_start_dt += timedelta(days=1)
+            
+        time_to_core = (core_start_dt - window_end).total_seconds() / 60
+        
+        # Normalize time difference (assume max 24 hours = 1440 minutes)
+        proximity_score = 1 - (min(time_to_core, 1440) / 1440)
+        
+        # Calculate duration score
+        max_duration = max(w['duration_minutes'] for w in independent_windows)
+        duration_score = window['duration_minutes'] / max_duration
+        
+        # Combine scores with weightings
+        return (0.7 * duration_score) + (0.3 * proximity_score)
+    
+    # Score all windows
+    scored_windows = []
+    for window in independent_windows:
+        score = calculate_window_score(window)
+        scored_windows.append({
+            **window,
+            'score': score
+        })
+    
+    # Sort by score descending and take top 2
+    selected = sorted(scored_windows, 
+        key=lambda x: x['score'], 
+        reverse=True)[:2]
+    
+    # Sort final selection by start time for consistency
+    return sorted(selected, key=lambda x: x['start'])
+
+def format_charging_windows(core_window, additional_windows):
+    """
+    Formats the selected charging windows into the structure expected by the 
+    Solis API.
+    
+    Args:
+        core_window: Dictionary containing core charging window
+        additional_windows: List of additional charging windows
+        
+    Returns:
+        List of dictionaries in Solis API format
+    """
+    charging_windows = [
+        {
+            "chargeCurrent": "60",
+            "dischargeCurrent": "100",
+            "chargeStartTime": core_window['start'],
+            "chargeEndTime": core_window['end'],
+            "dischargeStartTime": "00:00",
+            "dischargeEndTime": "00:00"
+        }
+    ]
+    
+    # Add additional windows
+    for window in additional_windows:
+        charging_windows.append({
+            "chargeCurrent": "60",
+            "dischargeCurrent": "100",
+            "chargeStartTime": window['start'].strftime("%H:%M"),
+            "chargeEndTime": window['end'].strftime("%H:%M"),
+            "dischargeStartTime": "00:00",
+            "dischargeEndTime": "00:00"
+        })
+    
+    # Fill remaining slots if needed
+    while len(charging_windows) < 3:
+        charging_windows.append({
+            "chargeCurrent": "60",
+            "dischargeCurrent": "100",
+            "chargeStartTime": "00:00",
+            "chargeEndTime": "00:00",
+            "dischargeStartTime": "00:00",
+            "dischargeEndTime": "00:00"
+        })
+    
+    return charging_windows
 
 @service
 async def solis_smart_charging(config=None):
@@ -330,7 +515,7 @@ async def solis_smart_charging(config=None):
         return
 
     # Get dispatch data
-    dispatch_sensor = 'binary_sensor.octopus_energy_intelligent_dispatching'
+    dispatch_sensor = 'binary_sensor.octopus_energy_a_42185595_intelligent_dispatching'
     try:
         dispatches = state.getattr(dispatch_sensor)
     except Exception as e:
@@ -339,91 +524,33 @@ async def solis_smart_charging(config=None):
 
     log.info(f"Dispatches retrieved: {dispatches}")
 
-    # Initialize default core hours and charging windows
-    core_start = "23:30"
-    core_end = "05:30"
-    
-    charging_windows = [
-        {
-            "chargeCurrent": "60",
-            "dischargeCurrent": "100",
-            "chargeStartTime": core_start,
-            "chargeEndTime": core_end,
-            "dischargeStartTime": "00:00",
-            "dischargeEndTime": "00:00"
-        }
-    ]
-
     # Process dispatches if available
+    charging_windows = None
     if dispatches and 'planned_dispatches' in dispatches and dispatches['planned_dispatches']:
         try:
-            charging_blocks = find_contiguous_blocks(dispatches['planned_dispatches'])
+            # Normalize and merge dispatch windows
+            normalized = normalize_dispatches(dispatches['planned_dispatches'])
+            merged_windows = merge_dispatch_windows(normalized)
             
-            if charging_blocks:
-                log.debug(f"Charging blocks before selection: {charging_blocks}")
-
-                # Find top two blocks by charge
-                selected_blocks = []
-                remaining_blocks = charging_blocks.copy()
-                
-                for _ in range(2):  # Get top 2 blocks
-                    highest_charge = 0
-                    highest_block = None
-                    for block in remaining_blocks:
-                        if block['total_charge'] > highest_charge:
-                            highest_charge = block['total_charge']
-                            highest_block = block
-                    
-                    if highest_block:
-                        selected_blocks.append(highest_block)
-                        remaining_blocks.remove(highest_block)
-
-                log.debug(f"Selected blocks: {selected_blocks}")
-                
-                # Process selected blocks
-                non_core_blocks = []
-                for block in selected_blocks:
-                    if block.get('contiguous_position') == 'before':
-                        core_start = round_to_half_hour(block['start']).strftime("%H:%M")
-                        charging_windows[0]["chargeStartTime"] = core_start
-                        log.info(f"Extended core hours start to {core_start}")
-                    elif block.get('contiguous_position') == 'after':
-                        core_end = round_to_half_hour(block['end'], is_end_time=True).strftime("%H:%M")
-                        charging_windows[0]["chargeEndTime"] = core_end
-                        log.info(f"Extended core hours end to {core_end}")
-                    else:
-                        non_core_blocks.append(block)
-                
-                # Add non-core blocks
-                for block in non_core_blocks:
-                    start_time = round_to_half_hour(block['start'])
-                    end_time = round_to_half_hour(block['end'], is_end_time=True)
-                    
-                    charging_windows.append({
-                        "chargeCurrent": "60",
-                        "dischargeCurrent": "100",
-                        "chargeStartTime": start_time.strftime("%H:%M"),
-                        "chargeEndTime": end_time.strftime("%H:%M"),
-                        "dischargeStartTime": "00:00",
-                        "dischargeEndTime": "00:00"
-                    })
-        
+            # Process core hours and get independent windows
+            core_window, independent_windows = process_core_hours(merged_windows)
+            
+            # Select additional windows based on duration and timing
+            additional_windows = select_additional_windows(independent_windows, core_window)
+            
+            # Format windows for Solis API
+            charging_windows = format_charging_windows(core_window, additional_windows)
+            
         except Exception as e:
             log.error(f"Error processing dispatch windows: {str(e)}")
             log.info("Falling back to core hours only")
-    else:
-        log.info("No planned dispatches available, using core hours only")
-
-    # Fill remaining slots
-    while len(charging_windows) < 3:
-        charging_windows.append({
-            "chargeCurrent": "60",
-            "dischargeCurrent": "100",
-            "chargeStartTime": "00:00",
-            "chargeEndTime": "00:00",
-            "dischargeStartTime": "00:00",
-            "dischargeEndTime": "00:00"
-        })
+    
+    if charging_windows is None:
+        log.info("Using default core hours only")
+        charging_windows = format_charging_windows(
+            {'start': "23:30", 'end': "05:30"},
+            []
+        )
 
     try:
         # Get inverter ID
