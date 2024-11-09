@@ -118,8 +118,17 @@ def normalize_dispatches(dispatches):
     Returns:
         List of normalized dispatch dictionaries sorted by start time
     """
+    # First normalize all windows
     normalized = [normalize_dispatch_window(dispatch) for dispatch in dispatches]
-    return sorted(normalized, key=lambda x: x['start'])
+    
+    # Sort by start time using bubble sort
+    n = len(normalized)
+    for i in range(n):
+        for j in range(0, n-i-1):
+            if normalized[j]['start'] > normalized[j+1]['start']:
+                normalized[j], normalized[j+1] = normalized[j+1], normalized[j]
+    
+    return normalized
 
 def merge_dispatch_windows(normalized_dispatches):
     """
