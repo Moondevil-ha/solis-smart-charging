@@ -332,6 +332,7 @@ def calculate_window_duration(start_time, end_time):
         minutes += 24 * 60
         
     return minutes
+    
 def select_additional_windows(independent_windows, core_window):
     """
     Selects additional charging windows based on:
@@ -356,43 +357,79 @@ def select_additional_windows(independent_windows, core_window):
         Scores a window based on duration and proximity to core start.
         Duration weighted more heavily (0.7) than proximity (0.3)
         """
-        # Find the time difference to core start in minutes
+        # Get end time of window for calculations
         window_end = window['end']
-        core_start_time = datetime.strptime(core_window['start'], "%H:%M").time()
-        core_start_dt = datetime.combine(window_end.date(), core_start_time)
         
-        # Adjust core start if needed to handle overnight comparisons
+        # Convert core start time string to time object
+        core_start_time = datetime.strptime(core_window['start'], "%H:%M").time()
+        
+        # Create timezone-aware datetime for comparison
+        # IMPORTANT: Must include timezone info to match window_end
+        core_start_dt = datetime.combine(window_end.date(), core_start_time).replace(
+            tzinfo=window_end.tzinfo
+        )
+        
+        # Handle overnight windows by adding a day if needed
         if core_start_dt < window_end:
             core_start_dt += timedelta(days=1)
-            
+        
+        # Calculate time to core in minutes
         time_to_core = (core_start_dt - window_end).total_seconds() / 60
         
-        # Normalize time difference (assume max 24 hours = 1440 minutes)
+        # Calculate proximity score (0-1 range)
         proximity_score = 1 - (min(time_to_core, 1440) / 1440)
         
-        # Calculate duration score
-        max_duration = max(w['duration_minutes'] for w in independent_windows)
+        # Find maximum duration using explicit loop
+        # Replaced generator expression for pyscript compatibility
+        max_duration = 0
+        for w in independent_windows:
+            if w['duration_minutes'] > max_duration:
+                max_duration = w['duration_minutes']
+        
+        # Calculate duration score (0-1 range)
         duration_score = window['duration_minutes'] / max_duration
         
-        # Combine scores with weightings
+        # Return weighted combination of scores
         return (0.7 * duration_score) + (0.3 * proximity_score)
     
     # Score all windows
     scored_windows = []
     for window in independent_windows:
         score = calculate_window_score(window)
-        scored_windows.append({
-            **window,
-            'score': score
-        })
+        # Create new dictionary to avoid modifying original
+        window_copy = window.copy()
+        window_copy['score'] = score
+        scored_windows.append(window_copy)
     
-    # Sort by score descending and take top 2
-    selected = sorted(scored_windows, 
-        key=lambda x: x['score'], 
-        reverse=True)[:2]
+    # Helper function for score-based sorting
+    def score_sort_key(x):
+        """Get score value, defaulting to 0 if not found"""
+        return x.get('score', 0)
     
-    # Sort final selection by start time for consistency
-    return sorted(selected, key=lambda x: x['start'])
+    # Sort by score descending using bubble sort
+    # Replaced lambda-based sort for pyscript compatibility
+    n = len(scored_windows)
+    for i in range(n):
+        for j in range(0, n-i-1):
+            if score_sort_key(scored_windows[j]) < score_sort_key(scored_windows[j+1]):
+                scored_windows[j], scored_windows[j+1] = scored_windows[j+1], scored_windows[j]
+    
+    # Select top 2 windows
+    selected = scored_windows[:2] if len(scored_windows) > 2 else scored_windows
+    
+    # Helper function for time-based sorting
+    def start_time_sort_key(x):
+        """Get start time for chronological sorting"""
+        return x['start']
+    
+    # Sort selected windows by start time using bubble sort
+    n = len(selected)
+    for i in range(n):
+        for j in range(0, n-i-1):
+            if start_time_sort_key(selected[j]) > start_time_sort_key(selected[j+1]):
+                selected[j], selected[j+1] = selected[j+1], selected[j]
+    
+    return selected
 
 def format_charging_windows(core_window, additional_windows):
     """
