@@ -103,6 +103,7 @@ action:
         }
 mode: single
 ```
+Note: The dispatching sensor will usually include you account ID, please check and edit the automation appropriately for the correct entity.
 
 ## How It Works
 
