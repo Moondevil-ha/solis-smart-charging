@@ -127,9 +127,8 @@ Note: The dispatching sensor will usually include your account ID, please check 
 ## Known Behaviors
 
 1. Dispatch Windows:
-   - Windows may remain after charging completion with reduced kWh values
+   - Windows may remain after charging completion -- to be addressed.
    - System maintains window integrity during overnight transitions
-   - Binary sensor state determines valid charging periods
 
 2. Window Processing:
    - Early morning dispatches (before 12:00) align with previous day's core window
