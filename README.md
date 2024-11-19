@@ -1,6 +1,3 @@
-**##NOTE PROJECT SUSPENDED##
-Solis have changed the firmware on my inverter and the APIv2.0 no longer works. Until I can get the v3.0 API docs, this project is suspended.**
-
 # Solis Smart Charging for Home Assistant
 
 This integration synchronizes Solis inverter charging windows with Octopus Energy Intelligent dispatch periods in Home Assistant. It automatically adjusts your battery charging schedule to maximize the use of cheaper electricity during dispatch periods while maintaining core charging hours.
@@ -15,11 +12,13 @@ Code has been utilised from https://github.com/stevegal/solis_control for the AP
 - Smart charging window management:
   - Automatically detects and merges contiguous charging blocks
   - Extends core hours when dispatch periods are adjacent
-  - Prioritizes windows based on available charge amount
+  - Handles early charging completion appropriately
+  - Maintains charging windows during dispatch periods
 - Robust time handling:
   - All times normalized to 30-minute slots
-  - Proper handling of overnight periods
-  - Clean management of time boundaries
+  - Smart handling of overnight periods and early morning dispatches
+  - Timezone-aware datetime processing
+  - Proper management of charging windows across midnight boundary
 
 ## Prerequisites
 
@@ -106,19 +105,36 @@ action:
         }
 mode: single
 ```
-Note: The dispatching sensor will usually include you account ID, please check and edit the automation appropriately for the correct entity.
+Note: The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
 
 ## How It Works
 
 1. The script monitors Octopus Energy Intelligent dispatch periods
 2. When dispatch periods are updated:
    - Core charging hours (23:30-05:30) are protected and cannot be reduced
+   - Early morning dispatches (00:00-12:00) are processed against previous day's core window
    - The script identifies contiguous charging blocks and merges them
    - Core hours are extended if dispatch periods are adjacent
    - Additional charging windows are selected based on available charge amount
    - All times are normalized to 30-minute slots
-3. The resulting charging windows are synchronized to your Solis inverter
-4. The process repeats when new dispatch periods are received
+3. During charging:
+   - Dispatch windows may remain but with adjusted kWh values
+   - Binary sensor state indicates valid charging periods
+   - Windows automatically adjust based on actual charging needs
+4. The resulting charging windows are synchronized to your Solis inverter
+5. The process repeats when new dispatch periods are received
+
+## Known Behaviors
+
+1. Dispatch Windows:
+   - Windows may remain after charging completion with reduced kWh values
+   - System maintains window integrity during overnight transitions
+   - Binary sensor state determines valid charging periods
+
+2. Window Processing:
+   - Early morning dispatches (before 12:00) align with previous day's core window
+   - Windows are always normalized to 30-minute boundaries
+   - Core window can extend but never shrink
 
 ## Obtaining Solis API Credentials
 
@@ -127,6 +143,22 @@ Note: The dispatching sensor will usually include you account ID, please check a
 3. Under API Management, create new API credentials
 4. Note down your API Key ID and Secret
 5. Your Plant ID can be found in the URL when viewing your plant details
+
+## Version History
+
+### v3.0x
+- Complete rewrite of window handling
+- Enhanced logic around midnight window crossover
+- Better logging and reporting
+
+### v2.0x
+- Enhanced overnight charging behavior
+- Improved early morning dispatch processing
+- Better handling of timezone-aware operations
+- More robust window merging logic
+
+### v1.0x
+- Initial release
 
 ## Contributing
 
