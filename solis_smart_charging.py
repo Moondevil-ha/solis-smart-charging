@@ -9,6 +9,10 @@ import re
 from http import HTTPStatus
 
 log = logging.getLogger("pyscript.solis_smart_charging")
+log.setLevel(logging.DEBUG)
+
+def debug_log(prefix, message):
+    log.debug(f"{prefix}: {message}")
 
 # Constants
 VERB = "POST"
@@ -16,13 +20,12 @@ LOGIN_URL = '/v2/api/login'
 CONTROL_URL= '/v2/api/control'
 INVERTER_URL= '/v1/api/inverterList'
 
-# API Helper Functions
+# API Helper Functions - Keeping exactly as is
 def digest(body: str) -> str:
     return base64.b64encode(hashlib.md5(body.encode('utf-8')).digest()).decode('utf-8')
 
 def passwordEncode(password: str) -> str:
-    md5Result = hashlib.md5(password.encode('utf-8')).hexdigest()
-    return md5Result
+    return hashlib.md5(password.encode('utf-8')).hexdigest()
 
 def prepare_header(config: dict[str,str], body: str, canonicalized_resource: str) -> dict[str, str]:
     content_md5 = digest(body)
@@ -56,398 +59,327 @@ def control_body(inverterId, chargeSettings) -> str:
             body = body+","
     return body+'"}'
 
-# Time Handling Functions
-def round_to_slot(dt, is_end_time=False):
-    """
-    Rounds datetime to nearest 30-minute slot.
-    Args:
-        dt: datetime to round
-        is_end_time: if True, rounds up for end times, otherwise rounds down
-    """
-    minute = dt.minute
-    if is_end_time:
-        if minute == 30:  # Handle exact 30-min boundary for end times
-            return dt.replace(second=0, microsecond=0)
-        if minute > 0:
-            if minute <= 30:
-                return dt.replace(minute=30, second=0, microsecond=0)
-            return dt.replace(hour=dt.hour + 1, minute=0, second=0, microsecond=0)
-        return dt.replace(minute=0, second=0, microsecond=0)  # Handle exact hour boundary
-    else:
-        if minute >= 30:
-            return dt.replace(minute=30, second=0, microsecond=0)
-        return dt.replace(minute=0, second=0, microsecond=0)
-
-def is_within_core_hours(start_dt, end_dt, core_start="23:30", core_end="05:30"):
-    """Check if a time window falls entirely within core hours."""
-    def to_minutes(dt):
-        return dt.hour * 60 + dt.minute
+class WindowProcessor:
+    def __init__(self):
+        self.core_window = None
+        self.dispatch_blocks = []
+        self.charging_windows = []
+        
+    def initialize_core_window(self, first_dispatch_time):
+        """Initialize core window based on first dispatch timezone and date.
+        If dispatches are received during early hours (00:00-12:00), align core window to previous day."""
+        dispatch_tz = first_dispatch_time.tzinfo
+        dispatch_hour = first_dispatch_time.hour
     
-    start_mins = to_minutes(start_dt)
-    end_mins = to_minutes(end_dt)
-    
-    # Convert core times to minutes
-    core_start_hour, core_start_minute = map(int, core_start.split(':'))
-    core_end_hour, core_end_minute = map(int, core_end.split(':'))
-    core_start_mins = core_start_hour * 60 + core_start_minute
-    core_end_mins = core_end_hour * 60 + core_end_minute
-    
-    # Adjust for overnight period
-    if core_start_mins > core_end_mins:  # Overnight period
-        if start_mins >= core_start_mins:
-            end_mins += 1440  # Add 24 hours worth of minutes
-        core_end_mins += 1440
-    
-    return start_mins >= core_start_mins and end_mins <= core_end_mins
-
-def normalize_dispatch(dispatch):
-    """Normalize a single dispatch window to 30-minute slots."""
-    return {
-        'start': round_to_slot(dispatch['start'], is_end_time=False),
-        'end': round_to_slot(dispatch['end'], is_end_time=True),
-        **{k: v for k, v in dispatch.items() if k not in ['start', 'end']}
-    }
-
-def normalize_dispatches(dispatches, core_start="23:30", core_end="05:30"):
-    """Filter out core-hour windows and normalize remaining ones."""
-    normalized = []
-    for dispatch in dispatches:
-        if not is_within_core_hours(dispatch['start'], dispatch['end'], core_start, core_end):
-            normalized.append(normalize_dispatch(dispatch))
-    
-    # Sort by start time using bubble sort
-    n = len(normalized)
-    for i in range(n):
-        for j in range(0, n-i-1):
-            if normalized[j]['start'] > normalized[j+1]['start']:
-                normalized[j], normalized[j+1] = normalized[j+1], normalized[j]
-    
-    return normalized
-
-def merge_dispatch_windows(normalized_dispatches):
-    """Merge overlapping and contiguous dispatch windows."""
-    if not normalized_dispatches:
-        return []
-    
-    merged = []
-    current_window = normalized_dispatches[0].copy()
-    
-    for next_window in normalized_dispatches[1:]:
-        # Check for overlap or contiguity (within 1 second tolerance)
-        if (next_window['start'] - current_window['end']).total_seconds() <= 1:
-            # Extend current window
-            current_window['end'] = max(current_window['end'], next_window['end'])
+        # If we receive dispatches between midnight and noon, 
+        # we're probably processing the current night's schedule
+        if 0 <= dispatch_hour < 12:
+            dispatch_date = (first_dispatch_time - timedelta(days=1)).date()
         else:
-            # Calculate duration and store current window
-            duration = (current_window['end'] - current_window['start']).total_seconds() / 60
-            current_window['duration_minutes'] = duration
-            merged.append(current_window)
-            current_window = next_window.copy()
-    
-    # Add final window with duration
-    duration = (current_window['end'] - current_window['start']).total_seconds() / 60
-    current_window['duration_minutes'] = duration
-    merged.append(current_window)
-    
-    return merged
-
-def process_core_hours(merged_windows, core_start="23:30", core_end="05:30"):
-    """Process windows against core hours and extend if overlaps or abuts.
-    Iteratively checks for new overlaps after each extension."""
-    
-    # Convert core hours to datetime for easier comparison
-    core_start_dt = datetime.strptime(core_start, "%H:%M")
-    core_end_dt = datetime.strptime(core_end, "%H:%M")
-    
-    # Adjust for overnight core period
-    if core_end_dt < core_start_dt:
-        core_end_dt += timedelta(days=1)
-
-    core_window = {
-        'start': core_start_dt,
-        'end': core_end_dt
-    }
-    
-    # Keep track of which windows we've processed
-    windows_to_check = merged_windows.copy()
-    independent_windows = []
-    changes_made = True
-    
-    while changes_made and windows_to_check:
-        changes_made = False
-        still_to_check = []
+            dispatch_date = first_dispatch_time.date()
         
-        for window in windows_to_check:
-            window_start = window['start']
-            window_end = window['end']
-            
-            # Adjust for overnight periods
-            if window_end < window_start:
-                window_end += timedelta(days=1)
-
-            # NEW: If this is a morning window being compared to previous evening core start
-            if window_start.hour < 12 and core_window['start'].hour > 12:
-                window_start += timedelta(days=1)
-                window_end += timedelta(days=1)
-            
-            # Check for any overlap or abutment (within 1 min tolerance)
-            if ((window_start <= core_window['end'] + timedelta(minutes=1) and 
-                window_end >= core_window['start'] - timedelta(minutes=1))):
-                # Extend core window
-                core_window['start'] = min(core_window['start'], window_start)
-                core_window['end'] = max(core_window['end'], window_end)
-                changes_made = True
-            else:
-                still_to_check.append(window)
-        
-        windows_to_check = still_to_check
+        next_date = dispatch_date + timedelta(days=1)
     
-    # Any windows left are truly independent
-    independent_windows = windows_to_check
+        # Initialize core window with same timezone as dispatches
+        core_start = datetime.combine(dispatch_date, 
+                                    datetime.strptime('23:30', '%H:%M').time()
+                                    ).replace(tzinfo=dispatch_tz)
+        core_end = datetime.combine(next_date, 
+                                    datetime.strptime('05:30', '%H:%M').time()
+                                    ).replace(tzinfo=dispatch_tz)
     
-    # Format core_window back to string times
-    result_core = {
-        'start': core_window['start'].strftime("%H:%M"),
-        'end': core_window['end'].strftime("%H:%M"),
-        'type': 'core'
-    }
-    
-    return result_core, independent_windows
-
-
-def select_additional_windows(independent_windows, core_window):
-    """Select additional windows based on duration and proximity to core start."""
-    if not independent_windows:
-        return []
-    
-    # Score windows based on duration and proximity to core start
-    scored_windows = []
-    max_duration = 0
-    for window in independent_windows:
-        if window['duration_minutes'] > max_duration:
-            max_duration = window['duration_minutes']
-    
-    for window in independent_windows:
-        # Duration score (0-1)
-        duration_score = window['duration_minutes'] / max_duration if max_duration > 0 else 0
-        
-        # Proximity score (0-1)
-        core_start_time = datetime.strptime(core_window['start'], "%H:%M").time()
-        window_end = window['end']
-        
-        # Use window's timezone for consistency
-        tz = window_end.tzinfo
-        core_start_dt = datetime.combine(window_end.date(), core_start_time)
-        core_start_dt = core_start_dt.replace(tzinfo=tz)
-        
-        if core_start_dt < window_end:
-            core_start_dt += timedelta(days=1)
-        
-        minutes_to_core = (core_start_dt - window_end).total_seconds() / 60
-        proximity_score = 1 - (min(minutes_to_core, 1440) / 1440)
-        
-        # Final score (70% duration, 30% proximity)
-        final_score = (0.7 * duration_score) + (0.3 * proximity_score)
-        scored_windows.append((window, final_score))
-    
-    # Sort by score using bubble sort
-    n = len(scored_windows)
-    for i in range(n):
-        for j in range(0, n-i-1):
-            if scored_windows[j][1] < scored_windows[j+1][1]:
-                scored_windows[j], scored_windows[j+1] = scored_windows[j+1], scored_windows[j]
-    
-    # Select top 2 windows
-    selected = []
-    for i in range(min(2, len(scored_windows))):
-        selected.append(scored_windows[i][0])
-    
-    # Sort selected windows by start time using bubble sort
-    n = len(selected)
-    for i in range(n):
-        for j in range(0, n-i-1):
-            if selected[j]['start'] > selected[j+1]['start']:
-                selected[j], selected[j+1] = selected[j+1], selected[j]
-    
-    return selected
-
-def format_charging_windows(core_window, additional_windows):
-    """Format windows for Solis API."""
-    charging_windows = [
-        {
-            "chargeCurrent": "60",
-            "dischargeCurrent": "100",
-            "chargeStartTime": core_window['start'],
-            "chargeEndTime": core_window['end'],
-            "dischargeStartTime": "00:00",
-            "dischargeEndTime": "00:00"
+        self.core_window = {
+            'start': core_start,
+            'end': core_end
         }
-    ]
-    
-    for window in additional_windows:
-        charging_windows.append({
-            "chargeCurrent": "60",
-            "dischargeCurrent": "100",
-            "chargeStartTime": window['start'].strftime("%H:%M"),
-            "chargeEndTime": window['end'].strftime("%H:%M"),
-            "dischargeStartTime": "00:00",
-            "dischargeEndTime": "00:00"
-        })
-    
-    # Fill remaining slots
-    while len(charging_windows) < 3:
-        charging_windows.append({
-            "chargeCurrent": "60",
-            "dischargeCurrent": "100",
-            "chargeStartTime": "00:00",
-            "chargeEndTime": "00:00",
-            "dischargeStartTime": "00:00",
-            "dischargeEndTime": "00:00"
-        })
-    
-    return charging_windows
+        log.debug(f"Initialized core window: {self.core_window['start']} to {self.core_window['end']}")
 
-def validate_charging_windows(charging_windows):
-    """
-    Validates charging windows before sending to API.
-    Returns (bool, str) tuple - (is_valid, error_message)
-    """
-    # Check we have exactly 3 windows
-    if len(charging_windows) != 3:
-        return False, f"Expected 3 charging windows, got {len(charging_windows)}"
-    
-    # Validate each window's time format and slot alignment
-    for i, window in enumerate(charging_windows):
-        start = window['chargeStartTime']
-        end = window['chargeEndTime']
+    def round_to_slot(self, dt: datetime, is_end_time: bool = False) -> datetime:
+        """Round datetime to nearest 30-minute slot."""
+        result = dt.replace(second=0, microsecond=0)
+        minute = result.minute
         
-        # Skip validation for dummy windows (00:00-00:00)
-        if start == "00:00" and end == "00:00":
-            continue
-            
-        # Check time format and slot alignment
-        for time_str in [start, end]:
-            try:
-                hour, minute = map(int, time_str.split(':'))
-                if minute not in [0, 30]:
-                    return False, f"Window {i+1} time {time_str} not aligned to 30-minute slot"
-            except:
-                return False, f"Window {i+1} has invalid time format: {time_str}"
-    
-    return True, ""
+        if is_end_time:
+            if minute > 0:
+                if minute <= 30:
+                    result = result.replace(minute=30)
+                else:
+                    result = result + timedelta(hours=1)
+                    result = result.replace(minute=0)
+        else:
+            result = result.replace(minute=(minute // 30) * 30)
+        
+        return result
 
-# Send the charging windows
+    def normalize_dispatch(self, dispatch: dict) -> dict:
+        """Normalize a dispatch window, maintaining all original attributes."""
+        normalized = {
+            'start': self.round_to_slot(dispatch['start'], False),
+            'end': self.round_to_slot(dispatch['end'], True),
+            'duration_minutes': (dispatch['end'] - dispatch['start']).total_seconds() / 60
+        }
+        # Copy any additional attributes
+        for k, v in dispatch.items():
+            if k not in ['start', 'end']:
+                normalized[k] = v
+        return normalized
+
+    def normalize_dispatches(self, dispatches: list) -> list:
+        """Process incoming dispatch windows."""
+        log.debug(f"\nProcessing {len(dispatches)} dispatch windows")
+        
+        if not dispatches:
+            return []
+            
+        # Initialize core window based on first dispatch
+        if self.core_window is None:
+            self.initialize_core_window(dispatches[0]['start'])
+            
+        self.dispatch_blocks = []
+        valid_dispatches = []
+        
+        # First pass: normalize all windows
+        for dispatch in dispatches:
+            normalized = self.normalize_dispatch(dispatch)
+            log.debug(f"Normalized window: {normalized['start']} to {normalized['end']}")
+            valid_dispatches.append(normalized)
+        
+        # Bubble sort by start time
+        n = len(valid_dispatches)
+        for i in range(n):
+            for j in range(0, n - i - 1):
+                if valid_dispatches[j]['start'] > valid_dispatches[j + 1]['start']:
+                    valid_dispatches[j], valid_dispatches[j + 1] = valid_dispatches[j + 1], valid_dispatches[j]
+        
+        log.debug("Sorted windows:")
+        for window in valid_dispatches:
+            log.debug(f"  {window['start']} to {window['end']}")
+        
+        # Merge contiguous windows
+        if valid_dispatches:
+            current_window = valid_dispatches[0].copy()
+            
+            for next_window in valid_dispatches[1:]:
+                # Check for contiguous or overlapping windows
+                if (next_window['start'] - current_window['end']).total_seconds() <= 1:
+                    log.debug(f"Merging windows: {current_window['end']} and {next_window['start']}")
+                    # Extend current window
+                    current_window['end'] = max(current_window['end'], next_window['end'])
+                    current_window['duration_minutes'] = (current_window['end'] - current_window['start']).total_seconds() / 60
+                else:
+                    self.dispatch_blocks.append(current_window)
+                    current_window = next_window.copy()
+            
+            self.dispatch_blocks.append(current_window)
+        
+        log.debug("\nFinal merged dispatch blocks:")
+        for block in self.dispatch_blocks:
+            log.debug(f"  {block['start']} to {block['end']} (duration: {block['duration_minutes']} mins)")
+        
+        return self.dispatch_blocks
+
+    def process_core_hours(self):
+        """Process windows against core hours and extend if needed."""
+        if not self.core_window:
+            return
+            
+        log.debug(f"\nProcessing core hours")
+        log.debug(f"Initial core window: {self.core_window['start']} to {self.core_window['end']}")
+        
+        while True:
+            changes_made = False
+            remaining_blocks = []
+            
+            for window in self.dispatch_blocks:
+                log.debug(f"\nChecking window: {window['start']} to {window['end']}")
+                
+                # Check if window overlaps core
+                if (window['start'] <= self.core_window['end'] and 
+                    window['end'] >= self.core_window['start']):
+                    
+                    if window['start'] < self.core_window['start']:
+                        log.debug(f"Extending core start from {self.core_window['start']} to {window['start']}")
+                        self.core_window['start'] = window['start']
+                        changes_made = True
+                    
+                    if window['end'] > self.core_window['end']:
+                        log.debug(f"Extending core end from {self.core_window['end']} to {window['end']}")
+                        self.core_window['end'] = window['end']
+                        changes_made = True
+                else:
+                    log.debug("Window outside core - keeping for additional windows")
+                    remaining_blocks.append(window)
+            
+            self.dispatch_blocks = remaining_blocks
+            
+            if not changes_made:
+                break
+        
+        log.debug(f"\nAfter core processing:")
+        log.debug(f"Final core window: {self.core_window['start']} to {self.core_window['end']}")
+        if remaining_blocks:
+            log.debug("Remaining windows for additional selection:")
+            for block in remaining_blocks:
+                log.debug(f"  {block['start']} to {block['end']} (duration: {block['duration_minutes']} mins)")
+        else:
+            log.debug("No remaining windows for additional selection")
+
+    def select_additional_windows(self):
+        """Select up to two additional windows based on duration."""
+        if not self.dispatch_blocks:
+            return []
+        
+        log.debug("\nSelecting additional windows")
+        
+        # Bubble sort by duration (longest first)
+        blocks = self.dispatch_blocks.copy()
+        n = len(blocks)
+        for i in range(n):
+            for j in range(0, n - i - 1):
+                if blocks[j]['duration_minutes'] < blocks[j + 1]['duration_minutes']:
+                    blocks[j], blocks[j + 1] = blocks[j + 1], blocks[j]
+        
+        selected = blocks[:2]
+        log.debug("Selected windows:")
+        for window in selected:
+            log.debug(f"  {window['start']} to {window['end']} (duration: {window['duration_minutes']} mins)")
+        
+        return selected
+
+    def format_charging_windows(self, additional_windows):
+        """Format windows for Solis API."""
+        log.debug("\nFormatting charging windows")
+    
+        if not self.core_window:
+            # Initialize with default core window using current time
+            self.initialize_core_window(datetime.now(timezone.utc))
+            
+        # Add core window
+        self.charging_windows = [{
+            "chargeCurrent": "60",
+            "dischargeCurrent": "100",
+            "chargeStartTime": self.core_window['start'].strftime("%H:%M"),
+            "chargeEndTime": self.core_window['end'].strftime("%H:%M"),
+            "dischargeStartTime": "00:00",
+            "dischargeEndTime": "00:00"
+        }]
+        log.debug(f"Core window: {self.charging_windows[0]}")
+    
+        # Add additional windows
+        for window in additional_windows:
+            formatted = {
+                "chargeCurrent": "60",
+                "dischargeCurrent": "100",
+                "chargeStartTime": window['start'].strftime("%H:%M"),
+                "chargeEndTime": window['end'].strftime("%H:%M"),
+                "dischargeStartTime": "00:00",
+                "dischargeEndTime": "00:00"
+            }
+            self.charging_windows.append(formatted)
+            log.debug(f"Additional window: {formatted}")
+    
+        # Fill with dummy windows if needed
+        while len(self.charging_windows) < 3:
+            dummy = {
+                "chargeCurrent": "60",
+                "dischargeCurrent": "100",
+                "chargeStartTime": "00:00",
+                "chargeEndTime": "00:00",
+                "dischargeStartTime": "00:00",
+                "dischargeEndTime": "00:00"
+            }
+            self.charging_windows.append(dummy)
+            log.debug(f"Added dummy window: {dummy}")
+    
+        return self.charging_windows
+
 @service
 async def solis_smart_charging(config=None):
-    """
-    PyScript service to sync Solis charging windows with Octopus dispatch periods.
-    Args:
-        config (dict): Configuration containing Solis API credentials
-    """
-    # Validate config first
+    """PyScript service to sync Solis charging windows with Octopus dispatch periods."""
     if not config:
         log.error("No configuration provided")
         return
-        
+    
     if isinstance(config, str):
         config = json.loads(config)
-
+    
     required_keys = ['secret', 'key_id', 'username', 'password', 'plantId']
     missing_keys = [key for key in required_keys if key not in config]
-    
     if missing_keys:
         log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
         return
-
-    # Create session for all API calls
-    async with async_get_clientsession(hass) as session:
+    
+    session = async_get_clientsession(hass)
+    
+    try:
+        # Login
+        body = '{"userInfo":"'+str(config['username'])+'","password":"'+ passwordEncode(str(config['password']))+'"}' 
+        header = prepare_header(config, body, LOGIN_URL)
+        login_response = await session.post(
+            "https://www.soliscloud.com:13333"+LOGIN_URL,
+            data=body,
+            headers=header
+        )
+        
+        if login_response.status != HTTPStatus.OK:
+            log.error(f"Login failed with status {login_response.status}")
+            return
+            
+        login_text = login_response.text()  # No await here
+        login_data = json.loads(re.sub(r'("(?:\\?.)*?")|,\s*([]}])', r'\1\2', login_text))
+        token = login_data["csrfToken"]
+        
+        # Get inverter ID
+        inverter_body = '{"stationId":"' + str(config['plantId']) + '"}'
+        inverter_header = prepare_header(config, inverter_body, INVERTER_URL)
+        inverter_response = await session.post(
+            "https://www.soliscloud.com:13333" + INVERTER_URL,
+            data=inverter_body,
+            headers=inverter_header
+        )
+        
+        inverter_data = inverter_response.json()  # No await here
+        inverterId = ""
+        for record in inverter_data['data']['page']['records']:
+            inverterId = record.get('id')
+        
+        if not inverterId:
+            log.error("No inverter ID found")
+            return
+        
+        # Process dispatch windows
+        dispatch_sensor = 'binary_sensor.octopus_energy_a_42185595_intelligent_dispatching'
+        processor = WindowProcessor()
+        
         try:
-            # Login to get token
-            body = '{"userInfo":"'+str(config['username'])+'","password":"'+ passwordEncode(str(config['password']))+'"}' 
-            header = prepare_header(config, body, LOGIN_URL)
-            response = await session.post(
-                "https://www.soliscloud.com:13333"+LOGIN_URL,
-                data=body,
-                headers=header
-            )
-            status = response.status
-            response_text = response.text()  # Removed await
-            r = json.loads(re.sub(r'("(?:\\?.)*?")|,\s*([]}])', r'\1\2', response_text))
-            
-            if status != HTTPStatus.OK:
-                log.error(f"Login failed with status {status}")
-                return
-                
-            token = r["csrfToken"]
-            log.info("Successfully logged in to Solis API")
-
-            # Get inverter ID
-            body = '{"stationId":"' + str(config['plantId']) + '"}'
-            header = prepare_header(config, body, INVERTER_URL)
-            response = await session.post(
-                "https://www.soliscloud.com:13333" + INVERTER_URL,
-                data=body,
-                headers=header
-            )
-            inverterList = response.json()  # Removed await
-            inverterId = ""
-            for record in inverterList['data']['page']['records']:
-                inverterId = record.get('id')
-            
-            if not inverterId:
-                log.error("No inverter ID found")
-                return
-                
-            log.info(f"Retrieved inverter ID: {inverterId}")
-
-            # Get dispatch data and process charging windows
-            dispatch_sensor = 'binary_sensor.octopus_energy_a_42185595_intelligent_dispatching'
-            try:
-                dispatches = state.getattr(dispatch_sensor)
-            except Exception as e:
-                log.error(f"Error getting dispatch data: {str(e)}")
-                return
-
-            # Process dispatches if available
-            charging_windows = None
-            if dispatches and 'planned_dispatches' in dispatches and dispatches['planned_dispatches']:
-                try:
-                    normalized = normalize_dispatches(dispatches['planned_dispatches'])
-                    merged_windows = merge_dispatch_windows(normalized)
-                    core_window, independent_windows = process_core_hours(merged_windows)
-                    additional_windows = select_additional_windows(independent_windows, core_window)
-                    charging_windows = format_charging_windows(core_window, additional_windows)
-                except Exception as e:
-                    log.error(f"Error processing dispatch windows: {str(e)}")
-                    log.info("Falling back to core hours only")
-            
-            if charging_windows is None:
-                log.info("Using default core hours only")
-                charging_windows = format_charging_windows(
-                    {'start': "23:30", 'end': "05:30"},
-                    []
-                )
-
-            # Add validation here
-            is_valid, error_message = validate_charging_windows(charging_windows)
-            if not is_valid:
-                log.error(f"Invalid charging windows: {error_message}")
-                return
-
-            # Set charging schedule
-            body = control_body(inverterId, charging_windows)
-            headers = prepare_header(config, body, CONTROL_URL)
-            headers['token'] = token
-            response = await session.post(
-                "https://www.soliscloud.com:13333"+CONTROL_URL,
-                data=body,
-                headers=headers
-            )
-            response_text = response.text()  # Removed await
-            log.info(f"Solis API response: {response_text}")
-            
-            return response_text
-
+            dispatches = state.getattr(dispatch_sensor)
+            if dispatches and 'planned_dispatches' in dispatches:
+                processor.normalize_dispatches(dispatches['planned_dispatches'])
+                processor.process_core_hours()
+                additional_windows = processor.select_additional_windows()
+                charging_windows = processor.format_charging_windows(additional_windows)
+            else:
+                charging_windows = processor.format_charging_windows([])  # Use default core hours
         except Exception as e:
-            log.error(f"Error communicating with Solis API: {str(e)}")
-            raise
+            log.error(f"Error processing dispatch windows: {str(e)}")
+            log.info("Using default core hours")
+            charging_windows = processor.format_charging_windows([])
+        
+        # Send to Solis API
+        control_data = control_body(inverterId, charging_windows)
+        control_headers = prepare_header(config, control_data, CONTROL_URL)
+        control_headers['token'] = token
+        
+        control_response = await session.post(
+            "https://www.soliscloud.com:13333"+CONTROL_URL,
+            data=control_data,
+            headers=control_headers
+        )
+        
+        response_text = control_response.text()  # No await here
+        log.info(f"Solis API response: {response_text}")
+        return response_text
+        
+    except Exception as e:
+        log.error(f"Error in solis_smart_charging: {str(e)}")
+        raise
