@@ -3,15 +3,13 @@ description: ""
 triggers:
   - trigger: state
     entity_id:
-      - binary_sensor.octopus_energy_intelligent_dispatching
+      - binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
     attribute: planned_dispatches
-  - trigger: time_pattern
-    minutes: "30"
 conditions:
   - condition: template
     value_template: >
       {% set dispatches =
-      state_attr('binary_sensor.octopus_energy_intelligent_dispatching',
+      state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
       'planned_dispatches') %} {% if dispatches is none %}
         {% set result = false %}
       {% else %}
@@ -27,6 +25,7 @@ actions:
           "key_id": "{{ states('input_text.solis_api_key') }}",
           "username": "{{ states('input_text.solis_username') }}",
           "password": "{{ states('input_text.solis_password') }}",
-          "plantId": "{{ states('input_text.solis_plant_id') }}"
+          "plantId": "{{ states('input_text.solis_plant_id') }}",
+          "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching"
         }
 mode: single
