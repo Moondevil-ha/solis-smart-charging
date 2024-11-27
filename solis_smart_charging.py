@@ -348,7 +348,10 @@ async def solis_smart_charging(config=None):
             return
         
         # Process dispatch windows
-        dispatch_sensor = 'binary_sensor.octopus_energy_a_42185595_intelligent_dispatching'
+        dispatch_sensor = config.get('dispatch_sensor')
+        if not dispatch_sensor:
+            log.error("No dispatch sensor ID provided in configuration")
+            return
         processor = WindowProcessor()
         
         try:
