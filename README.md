@@ -77,23 +77,23 @@ solis_plant_id: "your_plant_id"
 ```yaml
 alias: Sync Solis Charging with Octopus Dispatch
 description: ""
-trigger:
-  - platform: state
+triggers:
+  - trigger: state
     entity_id:
-      - binary_sensor.octopus_energy_intelligent_dispatching
+      - binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
     attribute: planned_dispatches
-condition:
+conditions:
   - condition: template
     value_template: >
       {% set dispatches =
-      state_attr('binary_sensor.octopus_energy_intelligent_dispatching',
+      state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
       'planned_dispatches') %} {% if dispatches is none %}
         {% set result = false %}
       {% else %}
         {% set result = true %}
       {% endif %} {{ result }}
-action:
-  - service: pyscript.solis_smart_charging
+actions:
+  - action: pyscript.solis_smart_charging
     metadata: {}
     data:
       config: |-
@@ -102,9 +102,11 @@ action:
           "key_id": "{{ states('input_text.solis_api_key') }}",
           "username": "{{ states('input_text.solis_username') }}",
           "password": "{{ states('input_text.solis_password') }}",
-          "plantId": "{{ states('input_text.solis_plant_id') }}"
+          "plantId": "{{ states('input_text.solis_plant_id') }}",
+          "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching"
         }
 mode: single
+
 ```
 Note: The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
 
