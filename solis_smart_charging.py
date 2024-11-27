@@ -378,6 +378,29 @@ async def solis_smart_charging(config=None):
         
         response_text = control_response.text()  # No await here
         log.info(f"Solis API response: {response_text}")
+        if control_response.status == HTTPStatus.OK:
+            try:
+                response_data = control_response.json()
+                if response_data.get("code") == "0" and response_data.get("data", [{}])[0].get("code") == 0:
+                    schedule_text = ""
+                    for window in charging_windows:
+                        if window['chargeStartTime'] != "00:00" or window['chargeEndTime'] != "00:00":
+                            schedule_text += f"{window['chargeStartTime']}-{window['chargeEndTime']}, "
+                    
+                    schedule_text = schedule_text.rstrip(", ")
+                    
+                    hass.states.async_set(
+                        "sensor.solis_charge_schedule",
+                        schedule_text,
+                        {
+                            "charging_windows": charging_windows,
+                            "last_updated": datetime.now(timezone.utc).isoformat(),
+                            "schedule_source": "octopus_dispatch",
+                            "last_api_response": "success"
+                        }
+                    )
+            except Exception as e:
+                log.error(f"Failed to create sensor, but main script succeeded: {str(e)}")
         return response_text
         
     except Exception as e:
