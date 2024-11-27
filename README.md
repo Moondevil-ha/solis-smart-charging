@@ -67,7 +67,8 @@ solis_plant_id: "your_plant_id"
 ```
 
 4. Copy `solis_smart_charging.py` to your `config/pyscript` directory
-5. Add the automation to your `automations.yaml` or through the Home Assistant UI
+5. There are a couple of references in the code to the dispatch entity. Ensure you change this to match your own entities.
+6. Add the automation to your `automations.yaml` or through the Home Assistant UI
 
 ## Configuration
 
@@ -134,6 +135,10 @@ Note: The dispatching sensor will usually include your account ID, please check 
    - Early morning dispatches (before 12:00) align with previous day's core window
    - Windows are always normalized to 30-minute boundaries
    - Core window can extend but never shrink
+
+3. Local sensors
+   - Local entities are created (if they do not exist) or updated to reflect the calculated charging windows.
+   - The intention is to check windows before sending to avoid duplicate writes in a future release.
 
 ## Obtaining Solis API Credentials
 
