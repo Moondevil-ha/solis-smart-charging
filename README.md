@@ -150,6 +150,138 @@ Note: The dispatching sensor will usually include your account ID, please check 
 4. Note down your API Key ID and Secret
 5. Your Plant ID can be found in the URL when viewing your plant details
 
+## Example Dashboard View
+![image](https://github.com/user-attachments/assets/1e11ef7a-0a50-4db8-b4fa-dec9b96e5fe4)
+
+```yaml
+title: Octopus Intelligent
+panel: false
+icon: mdi:lightning-bolt-circle
+badges: []
+cards: []
+type: sections
+sections:
+  - type: grid
+    cards:
+      - type: custom:mushroom-template-card
+        primary: Octopus Energy Dispatches
+        secondary: >
+          {% set dispatches =
+          state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+          'planned_dispatches') %}
+
+          {% if dispatches | length > 0 %}
+            {%- for dispatch in dispatches %}
+              {{- (dispatch.start | as_local).strftime('%H:%M') }} - {{ (dispatch.end | as_local).strftime('%H:%M') }}
+              {%- if not loop.last %}
+          {{ '\n' }}      {%- endif %}
+            {%- endfor %}
+          {% else %}
+            No dispatches scheduled
+          {% endif %}
+        icon: mdi:clock-outline
+        icon_color: >-
+          {% if
+          is_state('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+          'on') %}
+            green
+          {% else %}
+            grey
+          {% endif %}
+        tap_action:
+          action: more-info
+          entity: binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
+        layout: vertical
+        multiline_secondary: true
+        card_mod:
+          style: |
+            ha-card {
+              --ha-card-background: var(--card-background-color);
+              --primary-text-color: var(--primary-color);
+            }
+        chip:
+          type: entity
+          entity: binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
+          icon: mdi:power
+          content: >
+            {{ 'Active' if
+            is_state('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+            'on') else 'Inactive' }}
+      - type: custom:mushroom-template-card
+        primary: Solis Charging Schedule
+        secondary: >
+          {% set windows = state_attr('sensor.solis_charge_schedule',
+          'charging_windows') %} {% if windows | length > 0 %}
+            {%- for window in windows %}
+              {%- if window.chargeStartTime != "00:00" or window.chargeEndTime != "00:00" %}
+                {{- window.chargeStartTime }} - {{ window.chargeEndTime }}
+                {%- if not loop.last %}
+          {{ '\n' }}        {%- endif %}
+              {%- endif %}
+            {%- endfor %}
+          {% else %}
+            No charging windows scheduled
+          {% endif %}
+        icon: mdi:battery-charging-outline
+        icon_color: >-
+          {% set windows = state_attr('sensor.solis_charge_schedule',
+          'charging_windows') %} {% if windows | length > 0 %}
+            green
+          {% else %}
+            grey
+          {% endif %}
+        tap_action:
+          action: more-info
+          entity: sensor.solis_charge_schedule
+        layout: vertical
+        multiline_secondary: true
+        card_mod:
+          style: |
+            ha-card {
+              --ha-card-background: var(--card-background-color);
+              --primary-text-color: var(--primary-color);
+            }
+        chip:
+          type: entity
+          entity: sensor.solis_charge_schedule
+          icon: mdi:battery-clock
+          content: >
+            {{ 'Updated: ' + state_attr('sensor.solis_charge_schedule',
+            'last_updated') | as_datetime | as_local | as_timestamp |
+            timestamp_custom('%H:%M') }}
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-number-card
+            entity: number.octopus_energy_a_42185595_intelligent_charge_target
+            icon: mdi:battery-charging
+            name: EV Charge Target
+            display_mode: buttons
+            fill_container: true
+            layout: vertical
+            card_mod:
+              style: |
+                ha-card {
+                  --ha-card-background: var(--card-background-color);
+                  --primary-text-color: var(--primary-color);
+                }
+          - type: custom:mushroom-entity-card
+            entity: time.octopus_energy_a_42185595_intelligent_target_time
+            icon: mdi:clock-outline
+            name: Target Charge Time
+            tap_action:
+              action: more-info
+            layout: vertical
+            primary_info: name
+            secondary_info: state
+            card_mod:
+              style: |
+                ha-card {
+                  --ha-card-background: var(--card-background-color);
+                  --primary-text-color: var(--primary-color);
+                }
+    column_span: 2
+
+
 ## Version History
 
 ### v3.0x
