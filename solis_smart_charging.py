@@ -367,6 +367,23 @@ async def solis_smart_charging(config=None):
             log.error(f"Error processing dispatch windows: {str(e)}")
             log.info("Using default core hours")
             charging_windows = processor.format_charging_windows([])
+
+        # Check if the charging windows have changed
+        current_state = hass.states.get("sensor.solis_charge_schedule")
+        if current_state and current_state.attributes.get("charging_windows"):
+            current_windows = current_state.attributes["charging_windows"]
+            windows_match = True
+            
+            # Compare each window
+            for new_window, existing_window in zip(charging_windows, current_windows):
+                if (new_window["chargeStartTime"] != existing_window["chargeStartTime"] or
+                    new_window["chargeEndTime"] != existing_window["chargeEndTime"]):
+                    windows_match = False
+                    break
+            
+            if windows_match:
+                log.info("Charging windows unchanged - skipping API update")
+                return "Windows unchanged - no update needed"
         
         # Send to Solis API
         control_data = control_body(inverterId, charging_windows)
