@@ -140,7 +140,7 @@ Note: The dispatching sensor will usually include your account ID, please check 
 
 3. Local sensors
    - Local entities are created (if they do not exist) or updated to reflect the calculated charging windows.
-   - The intention is to check windows before sending to avoid duplicate writes in a future release.
+   - The newly calculated windows are checked against the local ones, and the API is only called if there is a change.
 
 ## Obtaining Solis API Credentials
 
