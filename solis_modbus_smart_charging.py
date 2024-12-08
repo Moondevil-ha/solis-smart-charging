@@ -386,12 +386,13 @@ def solis_modbus_smart_charging(config=None):
             state.set(button_entity, "press")
             task.sleep(2)
 
-        # Update the sensor state
-        schedule_text = ", ".join(
-            f"{w['chargeStartTime']}-{w['chargeEndTime']}" 
-            for w in charging_windows 
-            if w['chargeStartTime'] != "00:00" or w['chargeEndTime'] != "00:00"
-        )
+        # Create schedule text without generator expression
+        active_windows = []
+        for w in charging_windows:
+            if w['chargeStartTime'] != "00:00" or w['chargeEndTime'] != "00:00":
+                window_text = f"{w['chargeStartTime']}-{w['chargeEndTime']}"
+                active_windows.append(window_text)
+        schedule_text = ", ".join(active_windows)
         
         state.set(
             "sensor.solis_charge_schedule",
