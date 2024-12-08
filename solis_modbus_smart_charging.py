@@ -315,18 +315,6 @@ def solis_modbus_smart_charging(config=None):
         log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
         return
 
-    # First, ensure Time of Use mode is enabled
-    entity_prefix = config['entity_prefix']
-    
-    try:
-        # Enable Time of Use mode
-        state.set(f"{entity_prefix}_time_of_use_mode", "on")
-        task.sleep(1)
-        
-    except Exception as e:
-        log.error(f"Failed to set operating mode: {str(e)}")
-        return
-
     # Process dispatch windows using existing WindowProcessor
     processor = WindowProcessor()
     dispatch_sensor = config.get('dispatch_sensor')
@@ -346,56 +334,18 @@ def solis_modbus_smart_charging(config=None):
 
     # Update each time slot
     try:
-        # Set base charge/discharge current
-        state.set(f"{entity_prefix}_time_charging_charge_current", 60)
-        state.set(f"{entity_prefix}_time_charging_discharge_current", 100)
-        task.sleep(1)
-        
         for slot, window in enumerate(charging_windows, 1):
-            # Update charge times
             state.set(
-                f"{entity_prefix}_time_charging_charge_start_slot_{slot}",
+                f"{config['entity_prefix']}_charge_start_slot_{slot}",
                 window['chargeStartTime']
             )
             task.sleep(0.5)
             
             state.set(
-                f"{entity_prefix}_time_charging_charge_end_slot_{slot}",
+                f"{config['entity_prefix']}_charge_end_slot_{slot}",
                 window['chargeEndTime']
             )
             task.sleep(0.5)
-            
-            # Set discharge times (always 00:00 in your case)
-            state.set(
-                f"{entity_prefix}_time_charging_discharge_start_slot_{slot}",
-                window['dischargeStartTime']
-            )
-            task.sleep(0.5)
-            
-            state.set(
-                f"{entity_prefix}_time_charging_discharge_end_slot_{slot}",
-                window['dischargeEndTime']
-            )
-            task.sleep(0.5)
-
-        # Create schedule text
-        active_windows = []
-        for w in charging_windows:
-            if w['chargeStartTime'] != "00:00" or w['chargeEndTime'] != "00:00":
-                window_text = f"{w['chargeStartTime']}-{w['chargeEndTime']}"
-                active_windows.append(window_text)
-        schedule_text = ", ".join(active_windows)
-        
-        state.set(
-            "sensor.solis_charge_schedule",
-            schedule_text,
-            {
-                "charging_windows": charging_windows,
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-                "schedule_source": "octopus_dispatch",
-                "last_update_status": "success"
-            }
-        )
 
         return "Successfully updated charging schedule"
 
