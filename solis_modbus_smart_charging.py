@@ -309,29 +309,18 @@ def solis_modbus_smart_charging(config=None):
             log.error("Invalid JSON configuration")
             return
     
-    required_keys = ['switch_prefix']
+    required_keys = ['entity_prefix']
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
         log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
         return
 
-    # First, ensure Time of Use mode and grid charging are enabled
-    switch_prefix = config['switch_prefix']
+    # First, ensure Time of Use mode is enabled
+    entity_prefix = config['entity_prefix']
     
     try:
-        # Turn off other modes first
-        task.sleep(1)
-        state.set(f"{switch_prefix}_self_use_mode", "off")
-        task.sleep(1)
-        state.set(f"{switch_prefix}_off_grid_mode", "off")
-        task.sleep(1)
-        state.set(f"{switch_prefix}_feed_in_priority_mode", "off")
-        task.sleep(1)
-        
-        # Enable Time of Use mode and grid charging
-        state.set(f"{switch_prefix}_time_of_use_mode", "on")
-        task.sleep(1)
-        state.set(f"{switch_prefix}_allow_grid_to_charge_the_battery", "on")
+        # Enable Time of Use mode
+        state.set(f"{entity_prefix}_time_of_use_mode", "on")
         task.sleep(1)
         
     except Exception as e:
@@ -357,36 +346,39 @@ def solis_modbus_smart_charging(config=None):
 
     # Update each time slot
     try:
+        # Set base charge/discharge current
+        state.set(f"{entity_prefix}_time_charging_charge_current", 60)
+        state.set(f"{entity_prefix}_time_charging_discharge_current", 100)
+        task.sleep(1)
+        
         for slot, window in enumerate(charging_windows, 1):
-            # Convert times to hours/minutes
-            charge_start = datetime.strptime(window['chargeStartTime'], '%H:%M')
-            charge_end = datetime.strptime(window['chargeEndTime'], '%H:%M')
+            # Update charge times
+            state.set(
+                f"{entity_prefix}_time_charging_charge_start_slot_{slot}",
+                window['chargeStartTime']
+            )
+            task.sleep(0.5)
             
-            # Update the number entities
-            base_entity = f"{config.get('number_prefix', 'number.solis')}_"
-            suffix = f"_{slot}" if slot > 1 else ""
+            state.set(
+                f"{entity_prefix}_time_charging_charge_end_slot_{slot}",
+                window['chargeEndTime']
+            )
+            task.sleep(0.5)
             
-            # Set charge times using PyScript state access
-            entities_to_update = [
-                (f"timed_charge_start_hours{suffix}", charge_start.hour),
-                (f"timed_charge_start_minutes{suffix}", charge_start.minute),
-                (f"timed_charge_end_hours{suffix}", charge_end.hour),
-                (f"timed_charge_end_minutes{suffix}", charge_end.minute),
-                (f"timed_charge_current{suffix}", float(window['chargeCurrent'])),
-            ]
+            # Set discharge times (always 00:00 in your case)
+            state.set(
+                f"{entity_prefix}_time_charging_discharge_start_slot_{slot}",
+                window['dischargeStartTime']
+            )
+            task.sleep(0.5)
             
-            for entity, value in entities_to_update:
-                entity_id = f"{base_entity}{entity}"
-                state.set(entity_id, value)
-                task.sleep(0.5)
+            state.set(
+                f"{entity_prefix}_time_charging_discharge_end_slot_{slot}",
+                window['dischargeEndTime']
+            )
+            task.sleep(0.5)
 
-            # Trigger the update button for this slot
-            button_entity = f"button.solis_update_charge_discharge_times{suffix}"
-            task.sleep(1)
-            state.set(button_entity, "press")
-            task.sleep(2)
-
-        # Create schedule text without generator expression
+        # Create schedule text
         active_windows = []
         for w in charging_windows:
             if w['chargeStartTime'] != "00:00" or w['chargeEndTime'] != "00:00":
