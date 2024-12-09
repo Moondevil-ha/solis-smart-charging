@@ -8,7 +8,7 @@ import base64
 import re
 from http import HTTPStatus
 
-log = logging.getLogger("pyscript.solis_smart_charging")
+log = logging.getLogger("pyscript.solis_modbus_smart_charging")
 log.setLevel(logging.DEBUG)
 
 def debug_log(prefix, message):
