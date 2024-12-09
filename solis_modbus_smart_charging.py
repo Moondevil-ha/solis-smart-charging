@@ -8,7 +8,7 @@ import base64
 import re
 from http import HTTPStatus
 
-log = logging.getLogger("pyscript.solis_modbus_smart_charging")
+log = logging.getLogger("pyscript.solis_smart_charging")
 log.setLevel(logging.DEBUG)
 
 def debug_log(prefix, message):
@@ -336,24 +336,22 @@ def solis_modbus_smart_charging(config=None):
     try:
         for slot, window in enumerate(charging_windows, 1):
             # Set charge start time
-            entity_id = f"{config['entity_prefix']}_charge_start_slot_{slot}"
+            entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
             log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
             service.call(
                 "time",
                 "set_value",
-                target={"entity_id": entity_id},
-                time=window['chargeStartTime']
+                {'entity_id': entity_id, 'time': window['chargeStartTime']}
             )
             task.sleep(0.5)
             
             # Set charge end time
-            entity_id = f"{config['entity_prefix']}_charge_end_slot_{slot}"
+            entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
             log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
             service.call(
                 "time",
                 "set_value",
-                target={"entity_id": entity_id},
-                time=window['chargeEndTime']
+                {'entity_id': entity_id, 'time': window['chargeEndTime']}
             )
             task.sleep(0.5)
 
