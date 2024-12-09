@@ -335,15 +335,25 @@ def solis_modbus_smart_charging(config=None):
     # Update each time slot
     try:
         for slot, window in enumerate(charging_windows, 1):
-            state.set(
-                f"{config['entity_prefix']}_charge_start_slot_{slot}",
-                window['chargeStartTime']
+            # Set charge start time
+            entity_id = f"{config['entity_prefix']}_charge_start_slot_{slot}"
+            log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
+            service.call(
+                "time",
+                "set_value",
+                target={"entity_id": entity_id},
+                time=window['chargeStartTime']
             )
             task.sleep(0.5)
             
-            state.set(
-                f"{config['entity_prefix']}_charge_end_slot_{slot}",
-                window['chargeEndTime']
+            # Set charge end time
+            entity_id = f"{config['entity_prefix']}_charge_end_slot_{slot}"
+            log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
+            service.call(
+                "time",
+                "set_value",
+                target={"entity_id": entity_id},
+                time=window['chargeEndTime']
             )
             task.sleep(0.5)
 
