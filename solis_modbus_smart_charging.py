@@ -313,7 +313,7 @@ def solis_modbus_smart_charging(config=None):
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
         log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
-        return
+        return  
 
     # Process dispatch windows using existing WindowProcessor
     processor = WindowProcessor()
@@ -338,16 +338,14 @@ def solis_modbus_smart_charging(config=None):
             # Set charge start time
             entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
             log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
-            service.call("time.set_value", {"entity_id": entity_id,
-                                        "time": window['chargeStartTime']})
+            state.set(entity_id, window['chargeStartTime'])
             task.sleep(0.5)
             
             # Set charge end time
             entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
             log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
-            service.call("time.set_value", {"entity_id": entity_id,
-                                        "time": window['chargeEndTime']})
-            task.sleep(0.5)
+            state.set(entity_id, window['chargeEndTime'])
+            task.sleep(0.5) 
 
         return "Successfully updated charging schedule"
 
