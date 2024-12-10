@@ -338,21 +338,15 @@ def solis_modbus_smart_charging(config=None):
             # Set charge start time
             entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
             log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
-            service.call(
-                "time",
-                "set_value",
-                {'entity_id': entity_id, 'time': window['chargeStartTime']}
-            )
+            data = {"entity_id": entity_id, "time": window['chargeStartTime']}
+            service.call("time", "set_value", data)
             task.sleep(0.5)
             
             # Set charge end time
             entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
             log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
-            service.call(
-                "time",
-                "set_value",
-                {'entity_id': entity_id, 'time': window['chargeEndTime']}
-            )
+            data = {"entity_id": entity_id, "time": window['chargeEndTime']}
+            service.call("time", "set_value", data)
             task.sleep(0.5)
 
         return "Successfully updated charging schedule"
