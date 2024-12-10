@@ -295,66 +295,66 @@ class WindowProcessor:
 
 @service
 def solis_modbus_smart_charging(config=None):
-   """PyScript service to sync Solis charging windows with Octopus dispatch periods via HA Modbus."""
-   log = task.executor(logging.getLogger, "pyscript.solis_modbus_smart_charging")
-   
-   if not config:
-       log.error("No configuration provided")
-       return
-   
-   if isinstance(config, str):
-       try:
-           config = task.executor(json.loads, config)
-       except json.JSONDecodeError:
-           log.error("Invalid JSON configuration")
-           return
-   
-   required_keys = ['entity_prefix']
-   missing_keys = [key for key in required_keys if key not in config]
-   if missing_keys:
-       log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
-       return
+    """PyScript service to sync Solis charging windows with Octopus dispatch periods via HA Modbus."""
+    log = task.executor(logging.getLogger, "pyscript.solis_modbus_smart_charging")
+    
+    if not config:
+        log.error("No configuration provided")
+        return
+    
+    if isinstance(config, str):
+        try:
+            config = task.executor(json.loads, config)
+        except json.JSONDecodeError:
+            log.error("Invalid JSON configuration")
+            return
+    
+    required_keys = ['entity_prefix']
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
+        return
 
-   # Process dispatch windows using existing WindowProcessor
-   processor = WindowProcessor()
-   dispatch_sensor = config.get('dispatch_sensor')
-   
-   try:
-       dispatches = state.getattr(dispatch_sensor)
-       if dispatches and 'planned_dispatches' in dispatches:
-           processor.normalize_dispatches(dispatches['planned_dispatches'])
-           processor.process_core_hours()
-           additional_windows = processor.select_additional_windows()
-           charging_windows = processor.format_charging_windows(additional_windows)
-       else:
-           charging_windows = processor.format_charging_windows([])
-   except Exception as e:
-       log.error(f"Error processing dispatch windows: {str(e)}")
-       charging_windows = processor.format_charging_windows([])
+    # Process dispatch windows using existing WindowProcessor
+    processor = WindowProcessor()
+    dispatch_sensor = config.get('dispatch_sensor')
+    
+    try:
+        dispatches = state.getattr(dispatch_sensor)
+        if dispatches and 'planned_dispatches' in dispatches:
+            processor.normalize_dispatches(dispatches['planned_dispatches'])
+            processor.process_core_hours()
+            additional_windows = processor.select_additional_windows()
+            charging_windows = processor.format_charging_windows(additional_windows)
+        else:
+            charging_windows = processor.format_charging_windows([])
+    except Exception as e:
+        log.error(f"Error processing dispatch windows: {str(e)}")
+        charging_windows = processor.format_charging_windows([])
 
-   # Update each time slot
-   try:
-       for slot, window in enumerate(charging_windows, 1):
-           # Set charge start time
-           entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
-           log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
-           service.call("time.set_value", {
-               "entity_id": entity_id,
-               "time": window['chargeStartTime']
-           })
-           task.sleep(0.5)
-           
-           # Set charge end time
-           entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
-           log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
-           service.call("time.set_value", {
-               "entity_id": entity_id,
-               "time": window['chargeEndTime']
-           })
-           task.sleep(0.5)
+    # Update each time slot
+    try:
+        for slot, window in enumerate(charging_windows, 1):
+            # Set charge start time
+            entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
+            log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
+            service.call("time.set_value", {
+                "entity_id": entity_id,
+                "time": window['chargeStartTime']
+            })
+            task.sleep(0.5)
+            
+            # Set charge end time
+            entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
+            log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
+            service.call("time.set_value", {
+                "entity_id": entity_id,
+                "time": window['chargeEndTime']
+            })
+            task.sleep(0.5)
 
-       return "Successfully updated charging schedule"
+        return "Successfully updated charging schedule"
 
-   except Exception as e:
-       log.error(f"Error updating schedule: {str(e)}")
-       raise
+    except Exception as e:
+        log.error(f"Error updating schedule: {str(e)}")
+        raise
