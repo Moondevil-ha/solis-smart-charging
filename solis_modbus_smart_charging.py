@@ -337,17 +337,15 @@ def solis_modbus_smart_charging(config=None):
         for slot, window in enumerate(charging_windows, 1):
             # Set charge start time
             entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
-            start_time = datetime.strptime(window['chargeStartTime'], '%H:%M').time()
             log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
-            task.executor(service.call, "homeassistant", "set_value", {"entity_id": entity_id, "value": start_time.isoformat()})
+            state.set(entity_id, window['chargeStartTime'])
             task.sleep(0.5)
             
             # Set charge end time
             entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
-            end_time = datetime.strptime(window['chargeEndTime'], '%H:%M').time()
             log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
-            task.executor(service.call, "homeassistant", "set_value", {"entity_id": entity_id, "value": end_time.isoformat()})
-            task.sleep(0.5)
+            state.set(entity_id, window['chargeEndTime'])
+            task.sleep(0.5) 
 
         return "Successfully updated charging schedule"
 
