@@ -298,23 +298,23 @@ def solis_modbus_smart_charging(config=None):
     """
     PyScript service to sync Solis charging windows with Octopus dispatch periods via HA Modbus.
     """
-
     if not config:
         log.error("No configuration provided")
-        return
+        return "No configuration provided"
     
     if isinstance(config, str):
         try:
             config = task.executor(json.loads, config)
-        except json.JSONDecodeError:
-            log.error("Invalid JSON configuration")
-            return
+        except json.JSONDecodeError as e:
+            log.error(f"Invalid JSON configuration: {str(e)}")
+            return "Invalid JSON configuration"
     
     required_keys = ['entity_prefix']
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
-        log.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
-        return  
+        msg = f"Missing required configuration keys: {', '.join(missing_keys)}"
+        log.error(msg)
+        return msg
 
     # Process dispatch windows using existing WindowProcessor
     processor = WindowProcessor()
@@ -328,6 +328,7 @@ def solis_modbus_smart_charging(config=None):
             additional_windows = processor.select_additional_windows()
             charging_windows = processor.format_charging_windows(additional_windows)
         else:
+            log.warning(f"No dispatch data found for sensor {dispatch_sensor}")
             charging_windows = processor.format_charging_windows([])
     except Exception as e:
         log.error(f"Error processing dispatch windows: {str(e)}")
@@ -335,32 +336,43 @@ def solis_modbus_smart_charging(config=None):
 
     # Update each time slot
     try:
-        # Retrieve Solis Modbus time entities
+        # Verify Modbus connection first
+        if "solis_modbus" not in hass.data or "time_entities" not in hass.data["solis_modbus"]:
+            raise RuntimeError("Solis Modbus integration not properly initialized")
+            
         time_entities = hass.data["solis_modbus"]["time_entities"]
+        if not time_entities:
+            raise RuntimeError("No time entities found in Solis Modbus integration")
 
         for slot, window in enumerate(charging_windows, 1):
-            # Set charge start time
+            # Prepare entity IDs
             entity_id_start = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
-            log.debug(f"Setting start time for slot {slot}: {entity_id_start} to {window['chargeStartTime']}")
-            state.set(entity_id_start, window['chargeStartTime'])
-            
-            # Set charge end time
             entity_id_end = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
-            log.debug(f"Setting end time for slot {slot}: {entity_id_end} to {window['chargeEndTime']}")
+            
+            # Update HA states
+            state.set(entity_id_start, window['chargeStartTime'])
             state.set(entity_id_end, window['chargeEndTime'])
-
-            # Trigger async_set_value for Solis Modbus time entities
+            
+            # Process Modbus updates
             for entity in time_entities:
-                if entity.entity_id == entity_id_start:
-                    log.debug(f"Triggering async_set_value for {entity_id_start} with value {window['chargeStartTime']}")
-                    task.create(entity.async_set_value(datetime.strptime(window['chargeStartTime'], "%H:%M").time()))
-                elif entity.entity_id == entity_id_end:
-                    log.debug(f"Triggering async_set_value for {entity_id_end} with value {window['chargeEndTime']}")
-                    task.create(entity.async_set_value(datetime.strptime(window['chargeEndTime'], "%H:%M").time()))
+                try:
+                    if entity.entity_id == entity_id_start:
+                        start_time = datetime.strptime(window['chargeStartTime'], "%H:%M").time()
+                        log.debug(f"Setting start time for slot {slot}: {entity_id_start} to {start_time}")
+                        task.create(entity.async_set_value(start_time))
+                    elif entity.entity_id == entity_id_end:
+                        end_time = datetime.strptime(window['chargeEndTime'], "%H:%M").time()
+                        log.debug(f"Setting end time for slot {slot}: {entity_id_end} to {end_time}")
+                        task.create(entity.async_set_value(end_time))
+                except Exception as e:
+                    log.error(f"Error setting time for {entity.entity_id}: {str(e)}")
+                    # Continue with next entity rather than failing completely
+                    continue
 
-        log.info("Successfully updated charging schedule and triggered Modbus updates.")
+        log.info("Successfully updated charging schedule and triggered Modbus updates")
         return "Successfully updated charging schedule"
 
     except Exception as e:
-        log.error(f"Error updating schedule: {str(e)}")
-        raise
+        error_msg = f"Error updating schedule: {str(e)}"
+        log.error(error_msg)
+        return error_msg  # Return error message instead of raising exception
