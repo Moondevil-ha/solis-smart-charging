@@ -332,20 +332,67 @@ def solis_modbus_smart_charging(config=None):
         log.error(f"Error processing dispatch windows: {str(e)}")
         charging_windows = processor.format_charging_windows([])
 
-    # Update each time slot
+    # Register mappings for each slot
+    SLOT_REGISTERS = {
+        1: {"start": {"hour": 43143, "minute": 43144}, "end": {"hour": 43145, "minute": 43146}},
+        2: {"start": {"hour": 43153, "minute": 43154}, "end": {"hour": 43155, "minute": 43156}},
+        3: {"start": {"hour": 43163, "minute": 43164}, "end": {"hour": 43165, "minute": 43166}}
+    }
+
+    # Update each time slot using modbus registers
     try:
+        # Ensure Time of Use mode is enabled
+        service_data = {
+            "entity_id": "switch.solis_s6_solis_time_of_use_mode",
+            "state": "on"
+        }
+        task.executor(service.call, "homeassistant", "turn_on", service_data)
+        task.sleep(1)  # Give it a moment to enable TOU mode
+
         for slot, window in enumerate(charging_windows, 1):
-            # Set charge start time
-            entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
-            log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
-            state.set(entity_id, window['chargeStartTime'])
-            task.sleep(0.5)
-            
-            # Set charge end time
-            entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
-            log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
-            state.set(entity_id, window['chargeEndTime'])
-            task.sleep(0.5) 
+            try:
+                # Parse start time
+                start_hour, start_minute = map(int, window['chargeStartTime'].split(':'))
+                # Parse end time
+                end_hour, end_minute = map(int, window['chargeEndTime'].split(':'))
+                
+                # Validate time values
+                if not (0 <= start_hour <= 23 and 0 <= start_minute <= 59 and 
+                        0 <= end_hour <= 23 and 0 <= end_minute <= 59):
+                    log.error(f"Invalid time values for slot {slot}: {window['chargeStartTime']} - {window['chargeEndTime']}")
+                    continue
+
+                # Get register mappings for this slot
+                registers = SLOT_REGISTERS[slot]
+                
+                log.debug(f"Writing slot {slot} times to registers:")
+                # Write start time
+                service_data = {"address": registers['start']['hour'], "value": start_hour}
+                log.debug(f"  Start hour: register {registers['start']['hour']} = {start_hour}")
+                task.executor(service.call, "solis_modbus", "solis_write_holding_register", service_data)
+                task.sleep(0.5)
+                
+                service_data = {"address": registers['start']['minute'], "value": start_minute}
+                log.debug(f"  Start minute: register {registers['start']['minute']} = {start_minute}")
+                task.executor(service.call, "solis_modbus", "solis_write_holding_register", service_data)
+                task.sleep(0.5)
+                
+                # Write end time
+                service_data = {"address": registers['end']['hour'], "value": end_hour}
+                log.debug(f"  End hour: register {registers['end']['hour']} = {end_hour}")
+                task.executor(service.call, "solis_modbus", "solis_write_holding_register", service_data)
+                task.sleep(0.5)
+                
+                service_data = {"address": registers['end']['minute'], "value": end_minute}
+                log.debug(f"  End minute: register {registers['end']['minute']} = {end_minute}")
+                task.executor(service.call, "solis_modbus", "solis_write_holding_register", service_data)
+                task.sleep(0.5)
+                
+                log.debug(f"Completed writing slot {slot}: {start_hour:02d}:{start_minute:02d} to {end_hour:02d}:{end_minute:02d}")
+
+            except ValueError as e:
+                log.error(f"Error processing time values for slot {slot}: {str(e)}")
+                continue
 
         return "Successfully updated charging schedule"
 
