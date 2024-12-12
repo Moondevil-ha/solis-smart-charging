@@ -8,7 +8,7 @@ import base64
 import re
 from http import HTTPStatus
 
-log = logging.getLogger("pyscript.solis_smart_charging")
+log = logging.getLogger("pyscript.solis_modbus_smart_charging")
 log.setLevel(logging.DEBUG)
 
 def debug_log(prefix, message):
@@ -295,9 +295,10 @@ class WindowProcessor:
 
 @service
 def solis_modbus_smart_charging(config=None):
-    """PyScript service to sync Solis charging windows with Octopus dispatch periods via HA Modbus."""
-    log = task.executor(logging.getLogger, "pyscript.solis_modbus_smart_charging")
-    
+    """
+    PyScript service to sync Solis charging windows with Octopus dispatch periods via HA Modbus.
+    """
+
     if not config:
         log.error("No configuration provided")
         return
@@ -334,19 +335,30 @@ def solis_modbus_smart_charging(config=None):
 
     # Update each time slot
     try:
+        # Retrieve Solis Modbus time entities
+        time_entities = hass.data["solis_modbus"]["time_entities"]
+
         for slot, window in enumerate(charging_windows, 1):
             # Set charge start time
-            entity_id = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
-            log.debug(f"Setting start time for slot {slot}: {entity_id} to {window['chargeStartTime']}")
-            state.set(entity_id, window['chargeStartTime'])
-            task.sleep(0.5)
+            entity_id_start = f"{config['entity_prefix']}_time_charging_charge_start_slot_{slot}"
+            log.debug(f"Setting start time for slot {slot}: {entity_id_start} to {window['chargeStartTime']}")
+            state.set(entity_id_start, window['chargeStartTime'])
             
             # Set charge end time
-            entity_id = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
-            log.debug(f"Setting end time for slot {slot}: {entity_id} to {window['chargeEndTime']}")
-            state.set(entity_id, window['chargeEndTime'])
-            task.sleep(0.5) 
+            entity_id_end = f"{config['entity_prefix']}_time_charging_charge_end_slot_{slot}"
+            log.debug(f"Setting end time for slot {slot}: {entity_id_end} to {window['chargeEndTime']}")
+            state.set(entity_id_end, window['chargeEndTime'])
 
+            # Trigger async_set_value for Solis Modbus time entities
+            for entity in time_entities:
+                if entity.entity_id == entity_id_start:
+                    log.debug(f"Triggering async_set_value for {entity_id_start} with value {window['chargeStartTime']}")
+                    task.create(entity.async_set_value(datetime.strptime(window['chargeStartTime'], "%H:%M").time()))
+                elif entity.entity_id == entity_id_end:
+                    log.debug(f"Triggering async_set_value for {entity_id_end} with value {window['chargeEndTime']}")
+                    task.create(entity.async_set_value(datetime.strptime(window['chargeEndTime'], "%H:%M").time()))
+
+        log.info("Successfully updated charging schedule and triggered Modbus updates.")
         return "Successfully updated charging schedule"
 
     except Exception as e:
