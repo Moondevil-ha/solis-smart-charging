@@ -359,11 +359,11 @@ def solis_modbus_smart_charging(config=None):
                     if entity.entity_id == entity_id_start:
                         start_time = datetime.strptime(window['chargeStartTime'], "%H:%M").time()
                         log.debug(f"Setting start time for slot {slot}: {entity_id_start} to {start_time}")
-                        task.create(entity.async_set_value(start_time))
+                        entity.async_set_value(start_time)
                     elif entity.entity_id == entity_id_end:
                         end_time = datetime.strptime(window['chargeEndTime'], "%H:%M").time()
                         log.debug(f"Setting end time for slot {slot}: {entity_id_end} to {end_time}")
-                        task.create(entity.async_set_value(end_time))
+                        entity.async_set_value(end_time)
                 except Exception as e:
                     log.error(f"Error setting time for {entity.entity_id}: {str(e)}")
                     # Continue with next entity rather than failing completely
