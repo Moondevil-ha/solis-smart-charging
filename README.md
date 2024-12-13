@@ -4,6 +4,13 @@ This integration synchronizes Solis inverter charging windows with Octopus Energ
 
 Code has been utilised from https://github.com/stevegal/solis_control for the API calls to SolisCloud performing the actual programming.
 
+## Related Projects
+- [Solis API Implementation](link): Uses the SolisCloud API instead of Modbus
+- [Solis Modbus Implementation](link): Uses Modbus TCP instead of the API
+
+The core window processing logic is identical between both implementations, 
+only the communication method differs.
+
 ## Features
 
 - Automatically syncs Solis inverter charging windows with Octopus Energy Intelligent dispatch periods
