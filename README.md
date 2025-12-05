@@ -4,14 +4,14 @@ This integration synchronizes Solis inverter charging windows with Octopus Energ
 
 Code has been utilised from [https://github.com/stevegal/solis_control](https://github.com/stevegal/solis_control) for the API calls to SolisCloud performing the actual programming.
 
-The core window processing logic is identical between both implementations—only the communication method differs.
+The core window processing logic is identical between both implementations, only the communication method differs.
 
 ---
 
 ## Features
 
 * Automatically syncs Solis inverter charging windows with Octopus Energy Intelligent dispatch periods
-* Maintains protected core charging hours (23:30–05:30)
+* Maintains protected core charging hours (23:30-05:30)
 * Supports up to three charging windows (Solis limitation)
 * Smart charging window management:
   * Automatically detects and merges contiguous charging blocks
@@ -20,12 +20,13 @@ The core window processing logic is identical between both implementations—onl
   * Maintains charging windows during dispatch periods
 * Robust time handling:
   * All times normalized to 30-minute slots
-  * Timezone-aware
-  * Handles midnight crossover
-* **Multi-inverter support (new):**
-  * Explicit inverter selection by `inverter_sn` or `inverter_id`
-  * Automatic detection of hybrid/storage inverters (`productModel == 2`)
-  * Safety fallbacks to avoid sending control commands to the wrong datalogger
+  * Smart handling of overnight periods and early morning dispatches
+  * Timezone-aware datetime processing
+  * Proper management of charging windows across midnight boundary
+* **NEW: Multi-Inverter Support**
+  * Optional: `inverter_sn` or `inverter_id` can be provided to explicitly select the correct inverter
+  * If omitted, the script will automatically select a hybrid/storage inverter when possible
+  * Prevents Solis error B0107 when multiple inverters exist and only one supports charge control
 
 ---
 
@@ -34,14 +35,15 @@ The core window processing logic is identical between both implementations—onl
 * Home Assistant installation
 * Solis inverter with battery storage
 * Octopus Energy Intelligent tariff
-* [Octopus Energy Integration](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy)
-* [pyscript integration](https://github.com/custom-components/pyscript)
+* [Octopus Energy Integration](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) installed
+* [pyscript integration](https://github.com/custom-components/pyscript) installed
 
 ---
 
 ## Installation
 
-1. Ensure you have the pyscript integration installed and configured in Home Assistant.
+1. Ensure you have the pyscript integration installed and configured in Home Assistant
+
 2. Add the following to your `configuration.yaml`:
 
 ```yaml
@@ -65,6 +67,8 @@ input_text:
   solis_plant_id:
     name: Solis Plant ID
     initial: !secret solis_plant_id
+
+  # Added for multi-inverter support
   solis_inverter_sn:
     name: Solis Inverter Serial (optional)
     initial: !secret solis_inverter_sn
@@ -84,19 +88,21 @@ solis_plant_id: "your_plant_id"
 
 # Optional but recommended if you have more than one inverter
 solis_inverter_sn: "your_hybrid_inverter_sn"
-# or:
+# or
 solis_inverter_id: "your_hybrid_inverter_id"
 ```
 
-4. Copy `solis_smart_charging.py` to your `config/pyscript` directory.
-5. Update the dispatch entity references in the script/automation to match your own.
-6. Add the automation either via YAML or using the Home Assistant Automation UI.
+4. Copy `solis_smart_charging.py` to your `config/pyscript` directory
+
+5. There are a couple of references in the code to the dispatch entity. Ensure you change this to match your own entities.
+
+6. Add the automation to your `automations.yaml` or through the Home Assistant UI
 
 ---
 
 ## Configuration
 
-### Automation Example
+### Automation
 
 ```yaml
 alias: Sync Solis Charging with Octopus Dispatch
@@ -109,10 +115,16 @@ triggers:
 conditions:
   - condition: template
     value_template: >
-      {% set d = state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching', 'planned_dispatches') %}
-      {{ d is not none }}
+      {% set dispatches =
+      state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+      'planned_dispatches') %} {% if dispatches is none %}
+        {% set result = false %}
+      {% else %}
+        {% set result = true %}
+      {% endif %} {{ result }}
 actions:
   - action: pyscript.solis_smart_charging
+    metadata: {}
     data:
       config: |-
         {
@@ -122,83 +134,221 @@ actions:
           "password": "{{ states('input_text.solis_password') }}",
           "plantId": "{{ states('input_text.solis_plant_id') }}",
           "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
+
           "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}",
           "inverter_id": "{{ states('input_text.solis_inverter_id') }}"
         }
 mode: single
 ```
 
-**Note:**
-The dispatch entity will differ for each user. Ensure you update it correctly.
+**Note:** The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
 
 ---
 
-## Multi-Inverter Support (New)
+## Multi-Inverter Support
 
-If your Solis plant contains more than one inverter, SolisCloud may return them in an unpredictable order. Some models (string-only inverters, older dataloggers) **cannot** accept remote charge-slot programming and will return:
+If your Solis plant contains multiple inverters (e.g., PV inverter + hybrid inverter), SolisCloud may return them in an unpredictable order.
+
+Only hybrid/storage inverters can accept charge-schedule programming — the others will return:
 
 ```
 B0107 – The datalogger model does not support this function
 ```
 
-To guarantee correct behaviour:
+You can avoid this by explicitly specifying:
+* `inverter_sn` or
+* `inverter_id`
 
-### Option 1 — Explicitly set your hybrid inverter (recommended)
-
-```yaml
-inverter_sn: "your_hybrid_inverter_sn"
-```
-
-or
-
-```yaml
-inverter_id: "your_hybrid_inverter_id"
-```
-
-### Option 2 — Automatic detection
-
-If neither parameter is set:
-
-* The script auto-detects a **hybrid/storage inverter** via `productModel == 2`
-* If exactly one match exists, it's used
-* If 0 or >1 matches exist, the script logs a clear error and **stops safely**
-
-This ensures the script **never writes to the wrong datalogger**.
+If neither is provided:
+* The script will attempt to auto-select a hybrid/storage inverter
+* If exactly one suitable inverter exists, it will be used
+* If none or multiple matches exist, the script will stop safely and log an error
 
 ---
 
 ## How It Works
 
-1. The script listens for updated Octopus Intelligent dispatch periods.
-2. When dispatch updates occur:
-   * Core charging hours (23:30–05:30) are protected
-   * Early morning dispatches are anchored to the previous day
-   * Contiguous dispatch blocks are merged
-   * Core hours extend when required
-   * Additional windows are selected as needed
-   * All times are normalised to 30-minute slots
-3. The script determines the correct inverter (explicit or automatic).
-4. The generated charging windows are pushed to your Solis inverter.
-5. A local sensor (`sensor.solis_charge_schedule`) reflects the schedule.
+1. The script monitors Octopus Energy Intelligent dispatch periods
+
+2. When dispatch periods are updated:
+   * Core charging hours (23:30-05:30) are protected and cannot be reduced
+   * Early morning dispatches (00:00-12:00) are processed against previous day's core window
+   * The script identifies contiguous charging blocks and merges them
+   * Core hours are extended if dispatch periods are adjacent
+   * Additional charging windows are selected based on available charge amount
+   * All times are normalized to 30-minute slots
+
+3. During charging:
+   * Dispatch windows may remain but with adjusted kWh values
+   * Binary sensor state indicates valid charging periods
+   * Windows automatically adjust based on actual charging needs
+
+4. The resulting charging windows are synchronized to your Solis inverter
+
+5. The process repeats when new dispatch periods are received
 
 ---
 
-## Known Behaviours
+## Known Behaviors
 
-* Dispatch windows may remain after early charging completion (future improvement planned)
-* Core window always extends when needed but never shrinks
-* Local sensor is updated only when a schedule change occurs
-* Times always normalised to 30-minute Solis-compatible slots
+**Dispatch Windows:**
+* Windows may remain after charging completion -- to be addressed.
+* System maintains window integrity during overnight transitions
+
+**Window Processing:**
+* Early morning dispatches (before 12:00) align with previous day's core window
+* Windows are always normalized to 30-minute boundaries
+* Core window can extend but never shrink
+
+**Local sensors:**
+* Local entities are created (if they do not exist) or updated to reflect the calculated charging windows.
+* The newly calculated windows are checked against the local ones, and the API is only called if there is a change.
 
 ---
 
 ## Obtaining Solis API Credentials
 
-1. Log in to your [SolisCloud account](https://www.soliscloud.com/)
-2. Go to **Account Management → API Management**
-3. Create new credentials
-4. Record your API Key ID and Secret
-5. Your Plant ID is visible in your plant's URL
+1. Log in to your [Solis Cloud account](https://www.soliscloud.com/)
+2. Navigate to Account Management
+3. Under API Management, create new API credentials
+4. Note down your API Key ID and Secret
+5. Your Plant ID can be found in the URL when viewing your plant details
+
+---
+
+## Example Dashboard View
+
+<img width="1369" height="379" alt="image" src="https://github.com/user-attachments/assets/444447ed-7162-405c-8103-5b49cd1f69af" />
+
+
+```yaml
+title: Octopus Intelligent
+panel: false
+icon: mdi:lightning-bolt-circle
+badges: []
+cards: []
+type: sections
+sections:
+  - type: grid
+    cards:
+      - type: custom:mushroom-template-card
+        primary: Octopus Energy Dispatches
+        secondary: >
+          {% set dispatches =
+          state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+          'planned_dispatches') %}
+
+          {% if dispatches | length > 0 %}
+            {%- for dispatch in dispatches %}
+              {{- (dispatch.start | as_local).strftime('%H:%M') }} - {{ (dispatch.end | as_local).strftime('%H:%M') }}
+              {%- if not loop.last %}
+          {{ '\n' }}      {%- endif %}
+            {%- endfor %}
+          {% else %}
+            No dispatches scheduled
+          {% endif %}
+        icon: mdi:clock-outline
+        icon_color: >-
+          {% if
+          is_state('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+          'on') %}
+            green
+          {% else %}
+            grey
+          {% endif %}
+        tap_action:
+          action: more-info
+          entity: binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
+        layout: vertical
+        multiline_secondary: true
+        card_mod:
+          style: |
+            ha-card {
+              --ha-card-background: var(--card-background-color);
+              --primary-text-color: var(--primary-color);
+            }
+        chip:
+          type: entity
+          entity: binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
+          icon: mdi:power
+          content: >
+            {{ 'Active' if
+            is_state('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
+            'on') else 'Inactive' }}
+      - type: custom:mushroom-template-card
+        primary: Solis Charging Schedule
+        secondary: >
+          {% set windows = state_attr('sensor.solis_charge_schedule',
+          'charging_windows') %} {% if windows | length > 0 %}
+            {%- for window in windows %}
+              {%- if window.chargeStartTime != "00:00" or window.chargeEndTime != "00:00" %}
+                {{- window.chargeStartTime }} - {{ window.chargeEndTime }}
+                {%- if not loop.last %}
+          {{ '\n' }}        {%- endif %}
+              {%- endif %}
+            {%- endfor %}
+          {% else %}
+            No charging windows scheduled
+          {% endif %}
+        icon: mdi:battery-charging-outline
+        icon_color: >-
+          {% set windows = state_attr('sensor.solis_charge_schedule',
+          'charging_windows') %} {% if windows | length > 0 %}
+            green
+          {% else %}
+            grey
+          {% endif %}
+        tap_action:
+          action: more-info
+          entity: sensor.solis_charge_schedule
+        layout: vertical
+        multiline_secondary: true
+        card_mod:
+          style: |
+            ha-card {
+              --ha-card-background: var(--card-background-color);
+              --primary-text-color: var(--primary-color);
+            }
+        chip:
+          type: entity
+          entity: sensor.solis_charge_schedule
+          icon: mdi:battery-clock
+          content: >
+            {{ 'Updated: ' + state_attr('sensor.solis_charge_schedule',
+            'last_updated') | as_datetime | as_local | as_timestamp |
+            timestamp_custom('%H:%M') }}
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-number-card
+            entity: number.octopus_energy_a_42185595_intelligent_charge_target
+            icon: mdi:battery-charging
+            name: EV Charge Target
+            display_mode: buttons
+            fill_container: true
+            layout: vertical
+            card_mod:
+              style: |
+                ha-card {
+                  --ha-card-background: var(--card-background-color);
+                  --primary-text-color: var(--primary-color);
+                }
+          - type: custom:mushroom-entity-card
+            entity: time.octopus_energy_a_42185595_intelligent_target_time
+            icon: mdi:clock-outline
+            name: Target Charge Time
+            tap_action:
+              action: more-info
+            layout: vertical
+            primary_info: name
+            secondary_info: state
+            card_mod:
+              style: |
+                ha-card {
+                  --ha-card-background: var(--card-background-color);
+                  --primary-text-color: var(--primary-color);
+                }
+    column_span: 2
+```
 
 ---
 
@@ -206,22 +356,23 @@ This ensures the script **never writes to the wrong datalogger**.
 
 ### v3.1.0
 
-* Added MultiInverter Logic
-* Safety Fallbacks
-* More robust API Communication
+* MultiInverter Support
+* Fallback Position coding
+* Enhanced API robustness
 
 ### v3.0x
 
 * Complete rewrite of window handling
-* Enhanced logic for midnight crossover
+* Enhanced logic around midnight window crossover
 * Better logging and reporting
-* **New: Multi-inverter support & explicit inverter selection**
+* Added multi-inverter support and explicit inverter selection
 
 ### v2.0x
 
-* Improved early morning processing
-* Better timezone handling
-* Window merging improvements
+* Enhanced overnight charging behavior
+* Improved early morning dispatch processing
+* Better handling of timezone-aware operations
+* More robust window merging logic
 
 ### v1.0x
 
@@ -231,10 +382,10 @@ This ensures the script **never writes to the wrong datalogger**.
 
 ## Contributing
 
-Pull requests are welcome!
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
 ## License
 
-MIT License.
+This project is licensed under the MIT License - see the LICENSE file for details.
