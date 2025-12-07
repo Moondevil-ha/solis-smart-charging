@@ -325,7 +325,7 @@ async def solis_smart_charging(config=None):
             log.error(f"Login failed with status {login_response.status}")
             return
             
-        login_text = login_response.text()  # No await here
+        login_text = login_response.text()
         login_data = json.loads(re.sub(r'("(?:\\?.)*?")|,\s*([]}])', r'\1\2', login_text))
         token = login_data["csrfToken"]
         
@@ -338,10 +338,19 @@ async def solis_smart_charging(config=None):
             headers=inverter_header
         )
         
+        # CHANGE 1: Enhanced API response validation
         try:
-            inverter_data = inverter_response.json()  # No await here
+            inverter_data = inverter_response.json()
         except Exception as e:
             log.error(f"Failed to decode inverter list JSON: {str(e)}")
+            return
+
+        if not isinstance(inverter_data, dict):
+            log.error(f"Unexpected inverter data format: {type(inverter_data)}")
+            return
+            
+        if 'data' not in inverter_data:
+            log.error(f"No 'data' field in inverter response: {inverter_data}")
             return
 
         records = inverter_data.get('data', {}).get('page', {}).get('records', []) or []
@@ -349,9 +358,15 @@ async def solis_smart_charging(config=None):
             log.error("No inverters returned from inverterList")
             return
 
-        # Optional explicit config overrides
+        # CHANGE 2: Handle undefined secrets that return 'unknown', 'unavailable', or 'none'
         cfg_sn = str(config.get('inverter_sn', '')).strip()
         cfg_id = str(config.get('inverter_id', '')).strip()
+        
+        # Treat common HA undefined values as empty
+        if cfg_sn.lower() in ('unknown', 'unavailable', 'none'):
+            cfg_sn = ''
+        if cfg_id.lower() in ('unknown', 'unavailable', 'none'):
+            cfg_id = ''
 
         chosen = None
 
@@ -365,6 +380,13 @@ async def solis_smart_charging(config=None):
                     break
             if not chosen:
                 log.error("Configured inverter_sn/inverter_id not found in inverterList; please check your config.")
+                # CHANGE 3: Log available inverters to help troubleshooting
+                log.error("Available inverters:")
+                for r in records:
+                    log.error(
+                        f"  - ID: {r.get('id')}, SN: {r.get('sn')}, "
+                        f"Name: {r.get('name')}, ProductModel: {r.get('productModel')}"
+                    )
                 return
         else:
             # Try to auto-select a storage (battery) inverter: productModel == 2
@@ -382,6 +404,13 @@ async def solis_smart_charging(config=None):
                     "Multiple storage inverters found but no inverter_sn/inverter_id configured. "
                     "Please add one to your solis_smart_charging config."
                 )
+                # CHANGE 3: Log available inverters to help troubleshooting
+                log.error("Available storage inverters:")
+                for r in storage_records:
+                    log.error(
+                        f"  - ID: {r.get('id')}, SN: {r.get('sn')}, "
+                        f"Name: {r.get('name')}, ProductModel: {r.get('productModel')}"
+                    )
                 return
             else:
                 # No storage inverter – fallback to single inverter only
@@ -398,6 +427,13 @@ async def solis_smart_charging(config=None):
                         "Multiple inverters found and none identified as storage. "
                         "Please set inverter_sn or inverter_id in your solis_smart_charging config."
                     )
+                    # CHANGE 3: Log available inverters to help troubleshooting
+                    log.error("Available inverters:")
+                    for r in records:
+                        log.error(
+                            f"  - ID: {r.get('id')}, SN: {r.get('sn')}, "
+                            f"Name: {r.get('name')}, ProductModel: {r.get('productModel')}"
+                        )
                     return
 
         inverterId = chosen.get('id')
@@ -405,6 +441,47 @@ async def solis_smart_charging(config=None):
         if not inverterId:
             log.error("No inverter ID found after selection")
             return
+        
+        # CHANGE 4: Enhanced logging of selected inverter for debugging
+        log.info(
+            f"Using inverter - ID: {inverterId}, SN: {chosen.get('sn')}, "
+            f"Name: {chosen.get('name')}, ProductModel: {chosen.get('productModel')}"
+        )
+        
+        # CHANGE 5: Sync inverter time with Home Assistant (NTP-based)
+        # This prevents time drift that can cause charging windows to be incorrect
+        sync_time = config.get('sync_inverter_time', True)  # Default to True
+        if sync_time and str(sync_time).lower() not in ('false', '0', 'no'):
+            try:
+                # Get current time from Home Assistant (which should be NTP-synced)
+                current_time = datetime.now(timezone.utc)
+                
+                # Format time for Solis API using CID 56: "yyyy-MM-dd HH:mm:ss"
+                time_value = current_time.strftime("%Y-%m-%d %H:%M:%S")
+                time_body = f'{{"inverterId":"{inverterId}","cid":"56","value":"{time_value}"}}'
+                
+                time_headers = prepare_header(config, time_body, CONTROL_URL)
+                time_headers['token'] = token
+                
+                time_response = await session.post(
+                    "https://www.soliscloud.com:13333"+CONTROL_URL,
+                    data=time_body,
+                    headers=time_headers
+                )
+                
+                if time_response.status == HTTPStatus.OK:
+                    time_response_data = time_response.json()
+                    if time_response_data.get("code") == "0":
+                        log.info(f"Successfully synced inverter time to {current_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                    else:
+                        log.warning(f"Time sync returned non-zero code: {time_response_data}")
+                else:
+                    log.warning(f"Time sync request failed with status {time_response.status}")
+            except Exception as e:
+                log.warning(f"Failed to sync inverter time (non-fatal): {str(e)}")
+                # Don't return - continue with charging schedule update
+        else:
+            log.debug("Inverter time sync disabled in configuration")
         
         # Process dispatch windows
         dispatch_sensor = config.get('dispatch_sensor')
@@ -455,11 +532,11 @@ async def solis_smart_charging(config=None):
             headers=control_headers
         )
         
-        response_text = control_response.text()  # No await here
+        response_text = control_response.text()
         log.info(f"Solis API response: {response_text}")
         if control_response.status == HTTPStatus.OK:
             try:
-                response_data = control_response.json()  # No await here
+                response_data = control_response.json()
                 if response_data.get("code") == "0" and response_data.get("data", [{}])[0].get("code") == 0:
                     schedule_text = ""
                     for window in charging_windows:
