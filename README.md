@@ -11,6 +11,7 @@ The core window processing logic is identical between both implementations, only
 ## Features
 
 * Automatically syncs Solis inverter charging windows with Octopus Energy Intelligent dispatch periods
+* **NEW: Automatic inverter time synchronization** - prevents charging window drift due to clock inaccuracies
 * Maintains protected core charging hours (23:30-05:30)
 * Supports up to three charging windows (Solis limitation)
 * Smart charging window management:
@@ -23,10 +24,11 @@ The core window processing logic is identical between both implementations, only
   * Smart handling of overnight periods and early morning dispatches
   * Timezone-aware datetime processing
   * Proper management of charging windows across midnight boundary
-* **NEW: Multi-Inverter Support**
+* **Enhanced Multi-Inverter Support**
   * Optional: `inverter_sn` or `inverter_id` can be provided to explicitly select the correct inverter
   * If omitted, the script will automatically select a hybrid/storage inverter when possible
   * Prevents Solis error B0107 when multiple inverters exist and only one supports charge control
+  * **NEW: Detailed diagnostic logging** when inverter selection fails - shows all available inverters with IDs, serial numbers, and models
 
 ---
 
@@ -68,7 +70,7 @@ input_text:
     name: Solis Plant ID
     initial: !secret solis_plant_id
 
-  # Added for multi-inverter support
+  # Optional - for multi-inverter support
   solis_inverter_sn:
     name: Solis Inverter Serial (optional)
     initial: !secret solis_inverter_sn
@@ -86,7 +88,8 @@ solis_username: "your_username"
 solis_password: "your_password"
 solis_plant_id: "your_plant_id"
 
-# Optional but recommended if you have more than one inverter
+# Optional - only needed if you have more than one inverter
+# You can omit these entirely if you have a single inverter
 solis_inverter_sn: "your_hybrid_inverter_sn"
 # or
 solis_inverter_id: "your_hybrid_inverter_id"
@@ -143,6 +146,65 @@ mode: single
 
 **Note:** The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
 
+### Optional Configuration Parameters
+
+You can add these optional parameters to your automation config:
+
+```yaml
+data:
+  config: |-
+    {
+      "secret": "{{ states('input_text.solis_api_secret') }}",
+      ...
+      "sync_inverter_time": true,  # Default: true - syncs inverter clock on every run
+      "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}",
+      "inverter_id": "{{ states('input_text.solis_inverter_id') }}"
+    }
+```
+
+**sync_inverter_time**: (Default: `true`) - Automatically synchronizes your inverter's internal clock with Home Assistant's NTP-synced time before updating charging windows. This prevents time drift that can cause charging windows to start/stop at incorrect times. Set to `false` only if you want to manage inverter time manually.
+
+---
+
+## Automatic Time Synchronization
+
+**New in v3.2.0** - The script now automatically keeps your inverter's clock synchronized with accurate time.
+
+### Why This Matters
+
+Inverter internal clocks can drift over time, causing:
+* Charging windows starting late or early
+* Missing cheap rate periods
+* Charging during expensive periods
+* Incorrect window end times
+
+### How It Works
+
+1. On every script run, **before** updating charging windows, the current UTC time from Home Assistant is sent to the inverter
+2. Uses the Solis API control endpoint (CID 56) for NTP-based time sync
+3. The inverter clock is updated to match Home Assistant's time (which should be NTP-synced)
+4. Enabled by default, runs automatically with no user intervention needed
+
+### Log Output
+
+When time sync succeeds, you'll see:
+```
+INFO Successfully synced inverter time to 2025-12-07 10:36:40 UTC
+```
+
+### Disabling Time Sync
+
+While not recommended, you can disable automatic time sync:
+
+```yaml
+data:
+  config: |-
+    {
+      ...
+      "sync_inverter_time": false
+    }
+```
+
 ---
 
 ## Multi-Inverter Support
@@ -155,14 +217,54 @@ Only hybrid/storage inverters can accept charge-schedule programming — the oth
 B0107 – The datalogger model does not support this function
 ```
 
+### Configuration Options
+
 You can avoid this by explicitly specifying:
 * `inverter_sn` or
 * `inverter_id`
 
 If neither is provided:
-* The script will attempt to auto-select a hybrid/storage inverter
+* The script will attempt to auto-select a hybrid/storage inverter (ProductModel == 2)
 * If exactly one suitable inverter exists, it will be used
 * If none or multiple matches exist, the script will stop safely and log an error
+
+### Troubleshooting Multi-Inverter Issues
+
+**New in v3.2.0** - Enhanced diagnostic logging helps identify inverter selection problems.
+
+If you're getting B0107 errors:
+
+1. **Check your logs** after the script runs - you'll now see detailed information about all available inverters:
+
+```
+ERROR Available inverters:
+ERROR   - ID: 1308675217947185060, SN: 6031050221230050, Name: Solis-5K-Hybrid, ProductModel: 3105
+ERROR   - ID: 1234567890123456789, SN: 5031050221230099, Name: Solis-3K-PV, ProductModel: 1
+```
+
+2. **Identify your hybrid/storage inverter** - look for:
+   - ProductModel: 2, 3105, or similar storage inverter models
+   - The inverter connected to your battery
+
+3. **Copy the Serial Number** from the logs
+
+4. **Add it to your secrets.yaml**:
+```yaml
+solis_inverter_sn: "6031050221230050"  # Your actual SN from the logs
+```
+
+5. **Reload the automation** - the B0107 error should resolve
+
+### Handling Undefined Secrets
+
+**New in v3.2.0** - The script now correctly handles undefined secrets.
+
+If you don't define `solis_inverter_sn` or `solis_inverter_id` in your secrets, Home Assistant may return:
+- `"unknown"`
+- `"unavailable"`
+- `"none"`
+
+The script now treats these as empty strings and falls through to auto-selection. You **no longer need** to define these secrets if you want auto-selection to work.
 
 ---
 
@@ -171,6 +273,7 @@ If neither is provided:
 1. The script monitors Octopus Energy Intelligent dispatch periods
 
 2. When dispatch periods are updated:
+   * **Inverter time is synchronized** to ensure accurate charging window timing (v3.2.0)
    * Core charging hours (23:30-05:30) are protected and cannot be reduced
    * Early morning dispatches (00:00-12:00) are processed against previous day's core window
    * The script identifies contiguous charging blocks and merges them
@@ -354,10 +457,19 @@ sections:
 
 ## Version History
 
+### v3.2.0 (December 2025)
+
+* **NEW: Automatic inverter time synchronization** - prevents charging window drift
+* Enhanced multi-inverter troubleshooting with detailed diagnostic logging
+* Fixed handling of undefined secrets (now treats "unknown"/"unavailable" as empty)
+* Enhanced API response validation with better error messages
+* Logs all available inverters when selection fails
+* Confirms selected inverter in logs after successful selection
+
 ### v3.1.0
 
-* MultiInverter Support
-* Fallback Position coding
+* Multi-inverter support
+* Fallback position coding
 * Enhanced API robustness
 
 ### v3.0x
