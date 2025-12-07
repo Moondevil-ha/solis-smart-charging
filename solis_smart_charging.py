@@ -329,7 +329,7 @@ async def solis_smart_charging(config=None):
         login_data = json.loads(re.sub(r'("(?:\\?.)*?")|,\s*([]}])', r'\1\2', login_text))
         token = login_data["csrfToken"]
         
-        # Get inverter ID
+        # Get inverter ID (updated logic for multi-inverter plants)
         inverter_body = '{"stationId":"' + str(config['plantId']) + '"}'
         inverter_header = prepare_header(config, inverter_body, INVERTER_URL)
         inverter_response = await session.post(
@@ -338,13 +338,72 @@ async def solis_smart_charging(config=None):
             headers=inverter_header
         )
         
-        inverter_data = inverter_response.json()  # No await here
-        inverterId = ""
-        for record in inverter_data['data']['page']['records']:
-            inverterId = record.get('id')
-        
+        try:
+            inverter_data = inverter_response.json()  # No await here
+        except Exception as e:
+            log.error(f"Failed to decode inverter list JSON: {str(e)}")
+            return
+
+        records = inverter_data.get('data', {}).get('page', {}).get('records', []) or []
+        if not records:
+            log.error("No inverters returned from inverterList")
+            return
+
+        # Optional explicit config overrides
+        cfg_sn = str(config.get('inverter_sn', '')).strip()
+        cfg_id = str(config.get('inverter_id', '')).strip()
+
+        chosen = None
+
+        if cfg_sn or cfg_id:
+            for record in records:
+                if cfg_sn and str(record.get('sn')) == cfg_sn:
+                    chosen = record
+                    break
+                if cfg_id and str(record.get('id')) == cfg_id:
+                    chosen = record
+                    break
+            if not chosen:
+                log.error("Configured inverter_sn/inverter_id not found in inverterList; please check your config.")
+                return
+        else:
+            # Try to auto-select a storage (battery) inverter: productModel == 2
+            storage_records = [r for r in records if str(r.get('productModel')) == '2']
+            if len(storage_records) == 1:
+                chosen = storage_records[0]
+                log.info(
+                    "Auto-selected storage inverter id=%s sn=%s name=%s",
+                    chosen.get('id'),
+                    chosen.get('sn'),
+                    chosen.get('name')
+                )
+            elif len(storage_records) > 1:
+                log.error(
+                    "Multiple storage inverters found but no inverter_sn/inverter_id configured. "
+                    "Please add one to your solis_smart_charging config."
+                )
+                return
+            else:
+                # No storage inverter – fallback to single inverter only
+                if len(records) == 1:
+                    chosen = records[0]
+                    log.info(
+                        "Only one inverter found, using id=%s sn=%s name=%s",
+                        chosen.get('id'),
+                        chosen.get('sn'),
+                        chosen.get('name')
+                    )
+                else:
+                    log.error(
+                        "Multiple inverters found and none identified as storage. "
+                        "Please set inverter_sn or inverter_id in your solis_smart_charging config."
+                    )
+                    return
+
+        inverterId = chosen.get('id')
+
         if not inverterId:
-            log.error("No inverter ID found")
+            log.error("No inverter ID found after selection")
             return
         
         # Process dispatch windows
@@ -400,7 +459,7 @@ async def solis_smart_charging(config=None):
         log.info(f"Solis API response: {response_text}")
         if control_response.status == HTTPStatus.OK:
             try:
-                response_data = control_response.json()
+                response_data = control_response.json()  # No await here
                 if response_data.get("code") == "0" and response_data.get("data", [{}])[0].get("code") == 0:
                     schedule_text = ""
                     for window in charging_windows:
