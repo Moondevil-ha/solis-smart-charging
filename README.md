@@ -97,9 +97,7 @@ solis_inverter_id: "your_hybrid_inverter_id"
 
 4. Copy `solis_smart_charging.py` to your `config/pyscript` directory
 
-5. There are a couple of references in the code to the dispatch entity. Ensure you change this to match your own entities.
-
-6. Add the automation to your `automations.yaml` or through the Home Assistant UI
+5. Add the automation to your `automations.yaml` or through the Home Assistant UI
 
 ---
 
