@@ -107,6 +107,8 @@ solis_inverter_id: "your_hybrid_inverter_id"
 
 ### Automation
 
+**Basic Configuration (Single Inverter):**
+
 ```yaml
 alias: Sync Solis Charging with Octopus Dispatch
 description: ""
@@ -136,33 +138,75 @@ actions:
           "username": "{{ states('input_text.solis_username') }}",
           "password": "{{ states('input_text.solis_password') }}",
           "plantId": "{{ states('input_text.solis_plant_id') }}",
-          "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
-
-          "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}",
-          "inverter_id": "{{ states('input_text.solis_inverter_id') }}"
+          "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching"
         }
 mode: single
 ```
 
-**Note:** The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
+**Multi-Inverter Configuration:**
 
-### Optional Configuration Parameters
-
-You can add these optional parameters to your automation config:
+If you have multiple inverters, add the `inverter_sn` OR `inverter_id` parameter:
 
 ```yaml
 data:
   config: |-
     {
       "secret": "{{ states('input_text.solis_api_secret') }}",
-      ...
-      "sync_inverter_time": true,  # Default: true - syncs inverter clock on every run
-      "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}",
-      "inverter_id": "{{ states('input_text.solis_inverter_id') }}"
+      "key_id": "{{ states('input_text.solis_api_key') }}",
+      "username": "{{ states('input_text.solis_username') }}",
+      "password": "{{ states('input_text.solis_password') }}",
+      "plantId": "{{ states('input_text.solis_plant_id') }}",
+      "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
+      "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}"
     }
 ```
 
-**sync_inverter_time**: (Default: `true`) - Automatically synchronizes your inverter's internal clock with Home Assistant's NTP-synced time before updating charging windows. This prevents time drift that can cause charging windows to start/stop at incorrect times. Set to `false` only if you want to manage inverter time manually.
+**Note:** The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
+
+### Optional Configuration Parameters
+
+You can add these optional parameters to your automation config as needed:
+
+**Disable Time Sync (not recommended):**
+```yaml
+data:
+  config: |-
+    {
+      "secret": "{{ states('input_text.solis_api_secret') }}",
+      "key_id": "{{ states('input_text.solis_api_key') }}",
+      "username": "{{ states('input_text.solis_username') }}",
+      "password": "{{ states('input_text.solis_password') }}",
+      "plantId": "{{ states('input_text.solis_plant_id') }}",
+      "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
+      "sync_inverter_time": false
+    }
+```
+
+**Multi-Inverter with Custom Settings:**
+```yaml
+data:
+  config: |-
+    {
+      "secret": "{{ states('input_text.solis_api_secret') }}",
+      "key_id": "{{ states('input_text.solis_api_key') }}",
+      "username": "{{ states('input_text.solis_username') }}",
+      "password": "{{ states('input_text.solis_password') }}",
+      "plantId": "{{ states('input_text.solis_plant_id') }}",
+      "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
+      "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}",
+      "sync_inverter_time": true
+    }
+```
+
+**Important:** When adding parameters to JSON, remember:
+- No comma after the last parameter before the closing `}`
+- All strings must use double quotes `"`
+- Boolean values are lowercase: `true` or `false`
+
+**Available Parameters:**
+- `sync_inverter_time`: (Default: `true`) - Automatically synchronizes inverter clock with Home Assistant time
+- `inverter_sn`: (Optional) - Explicit inverter serial number for multi-inverter setups
+- `inverter_id`: (Optional) - Explicit inverter ID for multi-inverter setups (use SN or ID, not both)
 
 ---
 
