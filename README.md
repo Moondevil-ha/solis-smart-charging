@@ -622,3 +622,4 @@ MIT License - See LICENSE file for details
 - Always verify inverter schedule after first run
 
 **Not affiliated with Solis, Octopus Energy, or Home Assistant.**
+ 
