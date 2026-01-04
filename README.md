@@ -1,58 +1,89 @@
 # Solis Smart Charging for Home Assistant
 
-This integration synchronizes Solis inverter charging windows with Octopus Energy Intelligent dispatch periods in Home Assistant. It automatically adjusts your battery charging schedule to maximize the use of cheaper electricity during dispatch periods while maintaining core charging hours.
+PyScript for synchronizing Solis inverter charging windows with Octopus Energy Intelligent dispatch periods. Automatically adjusts battery charging schedules to maximize use of cheaper dispatch periods while maintaining protected core charging hours.
 
-Code has been utilised from [https://github.com/stevegal/solis_control](https://github.com/stevegal/solis_control) for the API calls to SolisCloud performing the actual programming.
+**Version 4.0.0** - Now with 6-slot firmware support!
 
-The core window processing logic is identical between both implementations, only the communication method differs.
+---
+
+## 🆕 What's New in v4.0.0
+
+- **Six-slot firmware support** (HMI version >= 4B00) - program up to 6 charging windows
+- **Automatic firmware detection** - script detects your firmware and uses the correct mode
+- **Backward compatible** - works seamlessly with legacy 3-slot firmware
+- **Enhanced diagnostics mode** - safely test without writing to your inverter
+- **Automatic time synchronization** - keeps inverter clock accurate (v3.2.0 feature retained)
+- **Timezone support** - configure time sync for your location
+- **Enhanced multi-inverter logging** - better troubleshooting when selection fails
+
+---
+
+## Quick Start
+
+**For most users (3-slot firmware):**
+1. Install script → Add automation → Done!
+
+**For 6-slot firmware users:**
+1. Install script
+2. First run with `"diagnostics_only": true`
+3. Check logs to verify detection
+4. Remove diagnostics flag and run normally
 
 ---
 
 ## Features
 
-* Automatically syncs Solis inverter charging windows with Octopus Energy Intelligent dispatch periods
-* **NEW: Automatic inverter time synchronization** - prevents charging window drift due to clock inaccuracies
-* Maintains protected core charging hours (23:30-05:30)
-* Supports up to three charging windows (Solis limitation)
-* Smart charging window management:
-  * Automatically detects and merges contiguous charging blocks
-  * Extends core hours when dispatch periods are adjacent
-  * Handles early charging completion appropriately
-  * Maintains charging windows during dispatch periods
-* Robust time handling:
-  * All times normalized to 30-minute slots
-  * Smart handling of overnight periods and early morning dispatches
-  * Timezone-aware datetime processing
-  * Proper management of charging windows across midnight boundary
-* **Enhanced Multi-Inverter Support**
-  * Optional: `inverter_sn` or `inverter_id` can be provided to explicitly select the correct inverter
-  * If omitted, the script will automatically select a hybrid/storage inverter when possible
-  * Prevents Solis error B0107 when multiple inverters exist and only one supports charge control
-  * **NEW: Detailed diagnostic logging** when inverter selection fails - shows all available inverters with IDs, serial numbers, and models
+### Core Functionality
+* Automatically syncs Solis inverter charge windows with Octopus Energy Intelligent dispatch periods
+* Protected core charging hours (default 23:30–05:30, auto-extends if dispatches overlap)
+* Smart window management:
+  - Normalizes dispatches to 30-minute boundaries
+  - Merges contiguous windows automatically
+  - Selects optimal additional windows based on duration
+
+### Firmware Support
+* **Legacy firmware (3 slots)**: Programs schedule via CID 103
+* **New firmware (6 slots, HMI >= 4B00)**: Programs via per-slot CIDs
+* **Auto-detection**: Examines HMI version and chooses correct mode
+* **Manual override**: Force legacy or six-slot mode if needed
+
+### Advanced Features
+* **Multi-inverter support**: Auto-selects storage inverters or use explicit SN/ID
+* **Automatic time sync**: Keeps inverter clock accurate using NTP
+* **Timezone-aware**: Configure time sync for your location
+* **Diagnostics mode**: Validate detection and schedule without writing to inverter
+* **Unchanged detection**: Only updates inverter when schedule changes
+* **Comprehensive logging**: Detailed feedback for troubleshooting
 
 ---
 
 ## Prerequisites
 
-* Home Assistant installation
-* Solis inverter with battery storage
-* Octopus Energy Intelligent tariff
-* [Octopus Energy Integration](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) installed
-* [pyscript integration](https://github.com/custom-components/pyscript) installed
+- Home Assistant installation
+- Solis inverter with battery storage
+- Octopus Energy Intelligent tariff
+- [Octopus Energy Integration](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) installed
+- [PyScript Integration](https://github.com/custom-components/pyscript) installed
 
 ---
 
 ## Installation
 
-1. Ensure you have the pyscript integration installed and configured in Home Assistant
+### 1. Enable PyScript
 
-2. Add the following to your `configuration.yaml`:
+Add to `configuration.yaml`:
 
 ```yaml
 pyscript:
   allow_all_imports: true
   hass_is_global: true
+```
 
+### 2. Create Input Text Entities
+
+Add to `configuration.yaml`:
+
+```yaml
 input_text:
   solis_api_secret:
     name: Solis API Secret
@@ -70,7 +101,7 @@ input_text:
     name: Solis Plant ID
     initial: !secret solis_plant_id
 
-  # Optional - for multi-inverter support
+  # Optional (for multi-inverter plants)
   solis_inverter_sn:
     name: Solis Inverter Serial (optional)
     initial: !secret solis_inverter_sn
@@ -79,55 +110,125 @@ input_text:
     initial: !secret solis_inverter_id
 ```
 
-3. Add your Solis credentials to `secrets.yaml`:
+### 3. Add Secrets
+
+Add to `secrets.yaml`:
 
 ```yaml
 solis_api_secret: "your_api_secret"
-solis_api_key: "your_api_key"
-solis_username: "your_username"
-solis_password: "your_password"
+solis_api_key: "your_api_key_id"
+solis_username: "your_soliscloud_username"
+solis_password: "your_soliscloud_password"
 solis_plant_id: "your_plant_id"
 
-# Optional - only needed if you have more than one inverter
+# Optional (only needed for multi-inverter plants)
 # You can omit these entirely if you have a single inverter
 solis_inverter_sn: "your_hybrid_inverter_sn"
-# or
+# OR
 solis_inverter_id: "your_hybrid_inverter_id"
 ```
 
-4. Copy `solis_smart_charging.py` to your `config/pyscript` directory
+### 4. Copy the Script
 
-5. Add the automation to your `automations.yaml` or through the Home Assistant UI
+Copy `solis_smart_charging.py` to:
+```
+config/pyscript/solis_smart_charging.py
+```
+
+### 5. Reload PyScript
+
+Developer Tools → YAML → Reload PyScript (or restart Home Assistant)
 
 ---
 
 ## Configuration
 
-### Automation
+The script is executed via Home Assistant automation and receives configuration as a JSON block.
 
-**Basic Configuration (Single Inverter):**
+### Required Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `secret` | Solis API Secret | From SolisCloud API Management |
+| `key_id` | Solis API Key ID | From SolisCloud API Management |
+| `username` | SolisCloud username | Your login email |
+| `password` | SolisCloud password | Your login password |
+| `plantId` | Solis station/plant ID | Found in SolisCloud URL |
+| `dispatch_sensor` | Entity ID with `planned_dispatches` | `binary_sensor.octopus_energy_xxx_intelligent_dispatching` |
+
+### Optional Parameters - Multi-Inverter
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `inverter_sn` | auto-detect | Explicit inverter serial number (recommended for multi-inverter) |
+| `inverter_id` | auto-detect | Explicit inverter ID (alternative to SN) |
+
+**Note:** If neither `inverter_sn` nor `inverter_id` is specified, the script will:
+1. Auto-select if there's only one storage inverter (ProductModel=2)
+2. Auto-select if there's only one inverter total
+3. Otherwise, fail with error showing available inverters
+
+### Optional Parameters - Firmware Mode
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `force_mode` | `"auto"` | `"auto"` (detect), `"legacy"` (force 3-slot), or `"six_slot"` (force 6-slot) |
+| `max_slots` | `3` | Maximum charging windows: `3` or `6` |
+
+### Optional Parameters - Safety & Diagnostics
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `diagnostics_only` | `false` | If `true`, calculates schedule but doesn't write to inverter |
+| `verify_readback` | `true` | If `true`, reads back each CID after writing (six-slot only) |
+| `control_retries` | `3` | Number of retry attempts for failed control writes |
+| `control_delay` | `0.1` | Seconds to wait before readback verification |
+| `inter_write_delay` | `0.25` | Seconds between consecutive CID writes (six-slot only) |
+
+### Optional Parameters - Time Sync (v3.2.0+)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `sync_inverter_time` | `true` | Enable automatic time synchronization |
+| `inverter_timezone` | `"UTC"` | IANA timezone name (e.g., `"Europe/London"`) |
+
+**Timezone Examples:**
+- UK: `"Europe/London"` (handles BST automatically)
+- Europe: `"Europe/Paris"`, `"Europe/Berlin"`
+- US: `"America/New_York"`, `"America/Los_Angeles"`
+- [Full list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+
+### Optional Parameters - Six-Slot Per-Window Settings
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `set_charge_current` | `false` | Write charge current to each slot |
+| `charge_current` | `"60"` | Charge current value (amps) |
+| `set_charge_soc` | `false` | Write charge SOC to each slot |
+| `charge_soc` | `"100"` | Target SOC percentage |
+
+---
+
+## Automation Examples
+
+### Basic Configuration (Auto-Detect)
+
+**Replace `<YOUR_ACCOUNT>` with your Octopus account ID!**
 
 ```yaml
 alias: Sync Solis Charging with Octopus Dispatch
 description: ""
-triggers:
-  - trigger: state
-    entity_id:
-      - binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
+trigger:
+  - platform: state
+    entity_id: binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching
     attribute: planned_dispatches
-conditions:
+condition:
   - condition: template
     value_template: >
-      {% set dispatches =
-      state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
-      'planned_dispatches') %} {% if dispatches is none %}
-        {% set result = false %}
-      {% else %}
-        {% set result = true %}
-      {% endif %} {{ result }}
-actions:
-  - action: pyscript.solis_smart_charging
-    metadata: {}
+      {% set d = state_attr('binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching', 'planned_dispatches') %}
+      {{ d is not none }}
+action:
+  - service: pyscript.solis_smart_charging
     data:
       config: |-
         {
@@ -136,410 +237,388 @@ actions:
           "username": "{{ states('input_text.solis_username') }}",
           "password": "{{ states('input_text.solis_password') }}",
           "plantId": "{{ states('input_text.solis_plant_id') }}",
-          "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching"
+          "dispatch_sensor": "binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching"
         }
 mode: single
 ```
 
-**Multi-Inverter Configuration:**
+### Multi-Inverter Configuration
 
-If you have multiple inverters, add the `inverter_sn` OR `inverter_id` parameter:
-
-```yaml
-data:
-  config: |-
-    {
-      "secret": "{{ states('input_text.solis_api_secret') }}",
-      "key_id": "{{ states('input_text.solis_api_key') }}",
-      "username": "{{ states('input_text.solis_username') }}",
-      "password": "{{ states('input_text.solis_password') }}",
-      "plantId": "{{ states('input_text.solis_plant_id') }}",
-      "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
-      "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}"
-    }
-```
-
-**Note:** The dispatching sensor will usually include your account ID, please check and edit the automation appropriately for the correct entity.
-
-### Optional Configuration Parameters
-
-You can add these optional parameters to your automation config as needed:
-
-**Disable Time Sync (not recommended):**
-```yaml
-data:
-  config: |-
-    {
-      "secret": "{{ states('input_text.solis_api_secret') }}",
-      "key_id": "{{ states('input_text.solis_api_key') }}",
-      "username": "{{ states('input_text.solis_username') }}",
-      "password": "{{ states('input_text.solis_password') }}",
-      "plantId": "{{ states('input_text.solis_plant_id') }}",
-      "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
-      "sync_inverter_time": false
-    }
-```
-
-**Multi-Inverter with Custom Settings:**
-```yaml
-data:
-  config: |-
-    {
-      "secret": "{{ states('input_text.solis_api_secret') }}",
-      "key_id": "{{ states('input_text.solis_api_key') }}",
-      "username": "{{ states('input_text.solis_username') }}",
-      "password": "{{ states('input_text.solis_password') }}",
-      "plantId": "{{ states('input_text.solis_plant_id') }}",
-      "dispatch_sensor": "binary_sensor.octopus_energy_a_42185595_intelligent_dispatching",
-      "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}",
-      "sync_inverter_time": true
-    }
-```
-
-**Important:** When adding parameters to JSON, remember:
-- No comma after the last parameter before the closing `}`
-- All strings must use double quotes `"`
-- Boolean values are lowercase: `true` or `false`
-
-**Available Parameters:**
-- `sync_inverter_time`: (Default: `true`) - Automatically synchronizes inverter clock with Home Assistant time
-- `inverter_sn`: (Optional) - Explicit inverter serial number for multi-inverter setups
-- `inverter_id`: (Optional) - Explicit inverter ID for multi-inverter setups (use SN or ID, not both)
-
----
-
-## Automatic Time Synchronization
-
-**New in v3.2.0** - The script now automatically keeps your inverter's clock synchronized with accurate time.
-
-### Why This Matters
-
-Inverter internal clocks can drift over time, causing:
-* Charging windows starting late or early
-* Missing cheap rate periods
-* Charging during expensive periods
-* Incorrect window end times
-
-### How It Works
-
-1. On every script run, **before** updating charging windows, the current UTC time from Home Assistant is sent to the inverter
-2. Uses the Solis API control endpoint (CID 56) for NTP-based time sync
-3. The inverter clock is updated to match Home Assistant's time (which should be NTP-synced)
-4. Enabled by default, runs automatically with no user intervention needed
-
-### Log Output
-
-When time sync succeeds, you'll see:
-```
-INFO Successfully synced inverter time to 2025-12-07 10:36:40 UTC
-```
-
-### Disabling Time Sync
-
-While not recommended, you can disable automatic time sync:
+Add `inverter_sn` parameter:
 
 ```yaml
-data:
-  config: |-
-    {
-      ...
-      "sync_inverter_time": false
-    }
+action:
+  - service: pyscript.solis_smart_charging
+    data:
+      config: |-
+        {
+          "secret": "{{ states('input_text.solis_api_secret') }}",
+          "key_id": "{{ states('input_text.solis_api_key') }}",
+          "username": "{{ states('input_text.solis_username') }}",
+          "password": "{{ states('input_text.solis_password') }}",
+          "plantId": "{{ states('input_text.solis_plant_id') }}",
+          "dispatch_sensor": "binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching",
+          "inverter_sn": "{{ states('input_text.solis_inverter_sn') }}"
+        }
+```
+
+### First-Time Six-Slot Testing
+
+Add diagnostics mode for safe testing:
+
+```yaml
+action:
+  - service: pyscript.solis_smart_charging
+    data:
+      config: |-
+        {
+          "secret": "{{ states('input_text.solis_api_secret') }}",
+          "key_id": "{{ states('input_text.solis_api_key') }}",
+          "username": "{{ states('input_text.solis_username') }}",
+          "password": "{{ states('input_text.solis_password') }}",
+          "plantId": "{{ states('input_text.solis_plant_id') }}",
+          "dispatch_sensor": "binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching",
+          "diagnostics_only": true
+        }
+```
+
+**After verifying logs and sensor attributes, remove `"diagnostics_only": true` line**
+
+### Force Six-Slot Mode
+
+If auto-detection fails:
+
+```yaml
+{
+  "secret": "{{ states('input_text.solis_api_secret') }}",
+  "key_id": "{{ states('input_text.solis_api_key') }}",
+  "username": "{{ states('input_text.solis_username') }}",
+  "password": "{{ states('input_text.solis_password') }}",
+  "plantId": "{{ states('input_text.solis_plant_id') }}",
+  "dispatch_sensor": "binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching",
+  "force_mode": "six_slot",
+  "max_slots": 6
+}
+```
+
+### UK Time Sync Configuration
+
+```yaml
+{
+  "secret": "{{ states('input_text.solis_api_secret') }}",
+  "key_id": "{{ states('input_text.solis_api_key') }}",
+  "username": "{{ states('input_text.solis_username') }}",
+  "password": "{{ states('input_text.solis_password') }}",
+  "plantId": "{{ states('input_text.solis_plant_id') }}",
+  "dispatch_sensor": "binary_sensor.octopus_energy_<YOUR_ACCOUNT>_intelligent_dispatching",
+  "inverter_timezone": "Europe/London"
+}
 ```
 
 ---
 
-## Multi-Inverter Support
+## Upgrading from v3.x
 
-If your Solis plant contains multiple inverters (e.g., PV inverter + hybrid inverter), SolisCloud may return them in an unpredictable order.
+### Do I Need to Change Anything?
 
-Only hybrid/storage inverters can accept charge-schedule programming — the others will return:
+**No!** Version 4.0.0 is fully backward compatible.
 
-```
-B0107 – The datalogger model does not support this function
-```
+- Existing automations continue to work without modification
+- Legacy 3-slot firmware operates exactly as before
+- New features are opt-in
 
-### Configuration Options
+### Recommended First Steps
 
-You can avoid this by explicitly specifying:
-* `inverter_sn` or
-* `inverter_id`
+1. **Update the script** - Replace `solis_smart_charging.py` with v4.0.0
+2. **Reload PyScript** - Developer Tools → YAML → Reload PyScript
+3. **First run with diagnostics** - Temporarily add `"diagnostics_only": true`
+4. **Check the logs** - Look for firmware detection messages
+5. **Check the sensor** - Review `sensor.solis_charge_schedule` attributes
+6. **Remove diagnostics flag** - Remove the diagnostics line and run normally
 
-If neither is provided:
-* The script will attempt to auto-select a hybrid/storage inverter (ProductModel == 2)
-* If exactly one suitable inverter exists, it will be used
-* If none or multiple matches exist, the script will stop safely and log an error
-
-### Troubleshooting Multi-Inverter Issues
-
-**New in v3.2.0** - Enhanced diagnostic logging helps identify inverter selection problems.
-
-If you're getting B0107 errors:
-
-1. **Check your logs** after the script runs - you'll now see detailed information about all available inverters:
+### What to Look For in Logs
 
 ```
-ERROR Available inverters:
-ERROR   - ID: 1308675217947185060, SN: 6031050221230050, Name: Solis-5K-Hybrid, ProductModel: 3105
-ERROR   - ID: 1234567890123456789, SN: 5031050221230099, Name: Solis-3K-PV, ProductModel: 1
+INFO Firmware detection complete: HMI=4b05, six_slot=True, force_mode=auto, final_max_slots=6
 ```
 
-2. **Identify your hybrid/storage inverter** - look for:
-   - ProductModel: 2, 3105, or similar storage inverter models
-   - The inverter connected to your battery
+This tells you:
+- Your HMI version (4b05 in example)
+- Whether six-slot was detected (True/False)
+- How many slots will be used (6 in example)
 
-3. **Copy the Serial Number** from the logs
+### Sensor Attributes Added in v4.0.0
 
-4. **Add it to your secrets.yaml**:
-```yaml
-solis_inverter_sn: "6031050221230050"  # Your actual SN from the logs
-```
-
-5. **Reload the automation** - the B0107 error should resolve
-
-### Handling Undefined Secrets
-
-**New in v3.2.0** - The script now correctly handles undefined secrets.
-
-If you don't define `solis_inverter_sn` or `solis_inverter_id` in your secrets, Home Assistant may return:
-- `"unknown"`
-- `"unavailable"`
-- `"none"`
-
-The script now treats these as empty strings and falls through to auto-selection. You **no longer need** to define these secrets if you want auto-selection to work.
+Check `sensor.solis_charge_schedule` attributes:
+- `mode`: `"legacy"` or `"six_slot"`
+- `hmi_version`: Detected HMI version
+- `operations`: (six-slot only) List of CID operations executed
+- `time_sync`: `"enabled"` or `"disabled"`
+- `timezone`: Configured timezone for time sync
 
 ---
 
 ## How It Works
 
-1. The script monitors Octopus Energy Intelligent dispatch periods
+### High-Level Flow
 
-2. When dispatch periods are updated:
-   * **Inverter time is synchronized** to ensure accurate charging window timing (v3.2.0)
-   * Core charging hours (23:30-05:30) are protected and cannot be reduced
-   * Early morning dispatches (00:00-12:00) are processed against previous day's core window
-   * The script identifies contiguous charging blocks and merges them
-   * Core hours are extended if dispatch periods are adjacent
-   * Additional charging windows are selected based on available charge amount
-   * All times are normalized to 30-minute slots
+1. **Login** - Authenticates with SolisCloud API
+2. **Inverter Selection** - Identifies the controllable inverter
+3. **Time Sync** - Syncs inverter clock with Home Assistant (CID 56)
+4. **Firmware Detection** - Checks HMI version to determine 3-slot vs 6-slot
+5. **Dispatch Processing**:
+   - Reads Octopus Intelligent `planned_dispatches`
+   - Normalizes to 30-minute boundaries
+   - Merges contiguous windows
+   - Applies core window logic (23:30–05:30 protected, may extend)
+   - Selects additional windows up to slot limit
+6. **Schedule Programming**:
+   - **Legacy**: Single CID 103 write with 3 windows
+   - **Six-slot**: Multiple CID writes (one per slot time)
+7. **Sensor Update** - Updates `sensor.solis_charge_schedule`
 
-3. During charging:
-   * Dispatch windows may remain but with adjusted kWh values
-   * Binary sensor state indicates valid charging periods
-   * Windows automatically adjust based on actual charging needs
+### Firmware Detection Logic
 
-4. The resulting charging windows are synchronized to your Solis inverter
+```
+1. Check force_mode configuration
+   - If "legacy" → use 3-slot CID 103
+   - If "six_slot" → use 6-slot CIDs
+   - If "auto" → continue to step 2
 
-5. The process repeats when new dispatch periods are received
+2. Query inverterDetail API for HMI version
+   
+3. Parse HMI version as hexadecimal
+   - If >= 0x4B00 (decimal 19200) → six-slot
+   - Otherwise → legacy
+
+4. If six-slot detected, ensure max_slots >= 6
+```
+
+### Window Selection Logic
+
+```
+1. Core window (23:30-05:30) is always slot 1
+2. If dispatches overlap core → extend core window
+3. Remaining dispatches sorted by duration (longest first)
+4. Select top N-1 dispatches (where N = max_slots)
+5. Fill remaining slots with 00:00-00:00 (disabled)
+```
 
 ---
 
-## Known Behaviors
+## Entities Created
 
-**Dispatch Windows:**
-* Windows may remain after charging completion -- to be addressed.
-* System maintains window integrity during overnight transitions
+### sensor.solis_charge_schedule
 
-**Window Processing:**
-* Early morning dispatches (before 12:00) align with previous day's core window
-* Windows are always normalized to 30-minute boundaries
-* Core window can extend but never shrink
+**State**: Comma-separated list of active windows (e.g., `"23:30-05:30, 13:00-14:00"`)
 
-**Local sensors:**
-* Local entities are created (if they do not exist) or updated to reflect the calculated charging windows.
-* The newly calculated windows are checked against the local ones, and the API is only called if there is a change.
+**Attributes**:
+- `charging_windows`: Full list of windows (3 or 6 depending on mode)
+- `mode`: `"legacy"` or `"six_slot"`
+- `hmi_version`: Detected HMI firmware version
+- `last_updated`: ISO timestamp of last update
+- `schedule_source`: `"octopus_dispatch"`
+- `last_api_response`: `"success"`, `"partial_failure"`, etc.
+- `operations`: (six-slot only) List of executed operations
+- `failed_operations`: (six-slot only) List of failed operations (if any)
+- `time_sync`: `"enabled"` or `"disabled"`
+- `timezone`: Configured timezone
 
 ---
 
 ## Obtaining Solis API Credentials
 
-1. Log in to your [Solis Cloud account](https://www.soliscloud.com/)
-2. Navigate to Account Management
-3. Under API Management, create new API credentials
-4. Note down your API Key ID and Secret
-5. Your Plant ID can be found in the URL when viewing your plant details
+1. Log in to [SolisCloud](https://www.soliscloud.com/)
+2. Navigate to **Account** → **API Management**
+3. Click **Activate Now**
+4. Complete puzzle verification
+5. Note your **Key ID** and **Key Secret**
+6. **Plant ID** can be found in the SolisCloud plant URL
 
 ---
 
-## Example Dashboard View
+## Troubleshooting
 
-<img width="1369" height="379" alt="image" src="https://github.com/user-attachments/assets/444447ed-7162-405c-8103-5b49cd1f69af" />
+### "No inverters returned from inverterList"
 
+**Cause**: Invalid `plantId` or API credentials
 
-```yaml
-title: Octopus Intelligent
-panel: false
-icon: mdi:lightning-bolt-circle
-badges: []
-cards: []
-type: sections
-sections:
-  - type: grid
-    cards:
-      - type: custom:mushroom-template-card
-        primary: Octopus Energy Dispatches
-        secondary: >
-          {% set dispatches =
-          state_attr('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
-          'planned_dispatches') %}
+**Solution**:
+1. Verify `plantId` matches your SolisCloud plant
+2. Check API credentials are correct
+3. Ensure API access is enabled for your account
 
-          {% if dispatches | length > 0 %}
-            {%- for dispatch in dispatches %}
-              {{- (dispatch.start | as_local).strftime('%H:%M') }} - {{ (dispatch.end | as_local).strftime('%H:%M') }}
-              {%- if not loop.last %}
-          {{ '\n' }}      {%- endif %}
-            {%- endfor %}
-          {% else %}
-            No dispatches scheduled
-          {% endif %}
-        icon: mdi:clock-outline
-        icon_color: >-
-          {% if
-          is_state('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
-          'on') %}
-            green
-          {% else %}
-            grey
-          {% endif %}
-        tap_action:
-          action: more-info
-          entity: binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
-        layout: vertical
-        multiline_secondary: true
-        card_mod:
-          style: |
-            ha-card {
-              --ha-card-background: var(--card-background-color);
-              --primary-text-color: var(--primary-color);
-            }
-        chip:
-          type: entity
-          entity: binary_sensor.octopus_energy_a_42185595_intelligent_dispatching
-          icon: mdi:power
-          content: >
-            {{ 'Active' if
-            is_state('binary_sensor.octopus_energy_a_42185595_intelligent_dispatching',
-            'on') else 'Inactive' }}
-      - type: custom:mushroom-template-card
-        primary: Solis Charging Schedule
-        secondary: >
-          {% set windows = state_attr('sensor.solis_charge_schedule',
-          'charging_windows') %} {% if windows | length > 0 %}
-            {%- for window in windows %}
-              {%- if window.chargeStartTime != "00:00" or window.chargeEndTime != "00:00" %}
-                {{- window.chargeStartTime }} - {{ window.chargeEndTime }}
-                {%- if not loop.last %}
-          {{ '\n' }}        {%- endif %}
-              {%- endif %}
-            {%- endfor %}
-          {% else %}
-            No charging windows scheduled
-          {% endif %}
-        icon: mdi:battery-charging-outline
-        icon_color: >-
-          {% set windows = state_attr('sensor.solis_charge_schedule',
-          'charging_windows') %} {% if windows | length > 0 %}
-            green
-          {% else %}
-            grey
-          {% endif %}
-        tap_action:
-          action: more-info
-          entity: sensor.solis_charge_schedule
-        layout: vertical
-        multiline_secondary: true
-        card_mod:
-          style: |
-            ha-card {
-              --ha-card-background: var(--card-background-color);
-              --primary-text-color: var(--primary-color);
-            }
-        chip:
-          type: entity
-          entity: sensor.solis_charge_schedule
-          icon: mdi:battery-clock
-          content: >
-            {{ 'Updated: ' + state_attr('sensor.solis_charge_schedule',
-            'last_updated') | as_datetime | as_local | as_timestamp |
-            timestamp_custom('%H:%M') }}
-      - type: vertical-stack
-        cards:
-          - type: custom:mushroom-number-card
-            entity: number.octopus_energy_a_42185595_intelligent_charge_target
-            icon: mdi:battery-charging
-            name: EV Charge Target
-            display_mode: buttons
-            fill_container: true
-            layout: vertical
-            card_mod:
-              style: |
-                ha-card {
-                  --ha-card-background: var(--card-background-color);
-                  --primary-text-color: var(--primary-color);
-                }
-          - type: custom:mushroom-entity-card
-            entity: time.octopus_energy_a_42185595_intelligent_target_time
-            icon: mdi:clock-outline
-            name: Target Charge Time
-            tap_action:
-              action: more-info
-            layout: vertical
-            primary_info: name
-            secondary_info: state
-            card_mod:
-              style: |
-                ha-card {
-                  --ha-card-background: var(--card-background-color);
-                  --primary-text-color: var(--primary-color);
-                }
-    column_span: 2
+### "Multiple inverters found; set inverter_sn or inverter_id"
+
+**Cause**: Your plant has multiple inverters and auto-selection failed
+
+**Solution**:
+1. Check the error log - it lists all available inverters with IDs and SNs
+2. Add `inverter_sn` or `inverter_id` to your automation config
+3. Example:
+   ```
+   ERROR Available inverters:
+   ERROR   - ID: 123456, SN: ABC123, Name: Solis-5K, ProductModel: 2
+   ERROR   - ID: 789012, SN: DEF456, Name: Solis-3K, ProductModel: 1
+   ```
+4. Add to config: `"inverter_sn": "ABC123"`
+
+### Six-Slot Not Detected / Wrong Mode
+
+**Symptoms**: Script uses legacy mode but you have 6-slot firmware
+
+**Diagnosis**:
+1. Run with `"diagnostics_only": true`
+2. Check logs for: `"HMI version detected: ..."`
+3. Check `sensor.solis_charge_schedule` → `hmi_version` attribute
+
+**Solutions**:
+
+**If HMI version not found:**
+```json
+"force_mode": "six_slot",
+"max_slots": 6
 ```
 
+**If HMI version detected but < 4B00:**
+- Your firmware may not support 6 slots
+- Continue using legacy mode
+- Or try forcing six-slot if you're certain you have the update
+
+### Time Sync Warnings
+
+**Symptom**: `"Time sync returned code: X"`
+
+**Cause**: Inverter may not support CID 56, or temporary API issue
+
+**Impact**: Schedule programming still works, only time sync affected
+
+**Solution**:
+- If persistent, disable time sync: `"sync_inverter_time": false`
+- Monitor inverter time manually
+
+### Charging Windows Not Updating
+
+**Check**:
+1. Is `planned_dispatches` attribute present on dispatch sensor?
+2. Check logs: `"Charging windows unchanged - skipping API update"`
+   - This means the schedule hasn't changed (normal behavior)
+3. Check `sensor.solis_charge_schedule` attributes for `last_api_response`
+
+### Diagnostics Mode Checklist
+
+Run with `"diagnostics_only": true` and check:
+
+**Logs should show:**
+```
+INFO Firmware detection complete: HMI=..., six_slot=..., force_mode=..., final_max_slots=...
+INFO Calculated X charging windows (core + Y additional)
+INFO Total operations to execute: Z
+```
+
+**Sensor attributes should show:**
+- `mode`: Correct firmware mode
+- `operations`: (six-slot) List of planned CID writes
+- `charging_windows`: Calculated schedule
+- `last_api_response`: `"not_sent_diagnostics_mode"`
+
 ---
 
-## Version History
+## Getting Help
+
+When reporting issues, please provide:
+
+1. **Your firmware mode**: Check `sensor.solis_charge_schedule` → `mode` attribute
+2. **HMI version**: Check `sensor.solis_charge_schedule` → `hmi_version` attribute
+3. **Full logs** from a single run with diagnostics enabled
+4. **Your automation config** (redact credentials!)
+5. **Inverter model** and **firmware version** from SolisCloud
+
+**Logs location**: Settings → System → Logs → search for "pyscript.solis_smart_charging"
+
+---
+
+## Changelog
+
+### v4.0.0 (December 2025)
+
+**Major Features:**
+- ✨ Six-slot firmware support (HMI >= 4B00)
+- ✨ Automatic firmware detection via HMI version
+- ✨ Force mode override (`legacy` / `six_slot` / `auto`)
+- ✨ Diagnostics mode for safe testing
+
+**Improvements:**
+- 🔧 Enhanced logging throughout (structured, detailed)
+- 🔧 Better error messages for multi-inverter scenarios
+- 🔧 Configurable retry/delay parameters
+- 🔧 Optional readback verification (six-slot mode)
+
+**v3.2.0 Features Retained:**
+- ✅ Automatic inverter time synchronization (CID 56)
+- ✅ Timezone support for time sync
+- ✅ Enhanced multi-inverter troubleshooting
+- ✅ Handles undefined secrets gracefully
+
+**Backward Compatibility:**
+- ✅ Existing automations work without changes
+- ✅ Legacy 3-slot mode unchanged
+- ✅ All v3.2.0 features preserved
 
 ### v3.2.0 (December 2025)
 
-* **NEW: Automatic inverter time synchronization** - prevents charging window drift
-* Enhanced multi-inverter troubleshooting with detailed diagnostic logging
-* Fixed handling of undefined secrets (now treats "unknown"/"unavailable" as empty)
-* Enhanced API response validation with better error messages
-* Logs all available inverters when selection fails
-* Confirms selected inverter in logs after successful selection
+- Enhanced multi-inverter troubleshooting with detailed diagnostic logging
+- Automatic inverter time synchronization (CID 56)
+- Fixed handling of undefined secrets
+- Enhanced API response validation
 
 ### v3.1.0
 
-* Multi-inverter support
-* Fallback position coding
-* Enhanced API robustness
+- Multi-inverter support
+- Fallback position coding
+- Enhanced API robustness
 
-### v3.0x
+### v3.0.x
 
-* Complete rewrite of window handling
-* Enhanced logic around midnight window crossover
-* Better logging and reporting
-* Added multi-inverter support and explicit inverter selection
-
-### v2.0x
-
-* Enhanced overnight charging behavior
-* Improved early morning dispatch processing
-* Better handling of timezone-aware operations
-* More robust window merging logic
-
-### v1.0x
-
-* Initial release
+- Complete rewrite of window handling
+- Enhanced midnight crossover logic
+- Better logging and reporting
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions welcome! Please:
+- Test thoroughly (especially six-slot mode)
+- Provide detailed logs with any issues
+- Include your HMI version and inverter model
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License - See LICENSE file for details
+
+---
+
+## Credits
+
+- Core API logic adapted from [stevegal/solis_control](https://github.com/stevegal/solis_control)
+- Six-slot CID mapping from [hultenvp/solis-sensor](https://github.com/hultenvp/solis-sensor)
+- Window processing logic: Original development
+- Time sync feature: v3.2.0 addition
+- Six-slot support: v4.0.0 community contribution
+
+---
+
+## Disclaimer
+
+**This script is provided AS-IS without warranty.**
+
+- Use at your own risk
+- Test with `diagnostics_only: true` first
+- The six-slot mode has limited testing - please report results
+- Incorrect configuration can affect your battery charging behavior
+- Always verify inverter schedule after first run
+
+**Not affiliated with Solis, Octopus Energy, or Home Assistant.**
