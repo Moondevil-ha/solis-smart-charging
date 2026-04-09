@@ -5,7 +5,6 @@ import logging
 import hashlib
 import hmac
 import base64
-
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -18,11 +17,9 @@ log.setLevel(logging.DEBUG)
 # -----------------------------
 BASE_URL = "https://www.soliscloud.com:13333"
 VERB = "POST"
-
 LOGIN_URL = "/v2/api/login"
 CONTROL_URL = "/v2/api/control"
 AT_READ_URL = "/v2/api/atRead"
-
 INVERTER_LIST_URL = "/v1/api/inverterList"
 INVERTER_DETAIL_URL = "/v1/api/inverterDetail"
 
@@ -36,10 +33,8 @@ DISCHARGE_TIME_CIDS = ["5964", "5968", "5972", "5976", "5980", "5987"]
 # Optional per-slot current / SOC CIDs (only if enabled)
 CHARGE_CURRENT_CIDS = ["5948", "5951", "5954", "5957", "5960", "5963"]
 CHARGE_SOC_CIDS = ["5928", "5929", "5930", "5931", "5932", "5933"]
-
 DISCHARGE_CURRENT_CIDS = ["5967", "5971", "5975", "5979", "5983", "5986"]
 DISCHARGE_SOC_CIDS = ["5965", "5969", "5973", "5977", "5981", "5984"]
-
 
 # -----------------------------
 # SolisCloud auth helpers
@@ -47,22 +42,17 @@ DISCHARGE_SOC_CIDS = ["5965", "5969", "5973", "5977", "5981", "5984"]
 def digest(body: str) -> str:
     return base64.b64encode(hashlib.md5(body.encode("utf-8")).digest()).decode("utf-8")
 
-
 def passwordEncode(password: str) -> str:
     return hashlib.md5(password.encode("utf-8")).hexdigest()
-
 
 def prepare_header(config: dict[str, str], body: str, canonicalized_resource: str) -> dict[str, str]:
     content_md5 = digest(body)
     content_type = "application/json"
-
     now = datetime.now(timezone.utc)
     date = now.strftime("%a, %d %b %Y %H:%M:%S GMT")
-
     encrypt_str = (
         VERB + "\n" + content_md5 + "\n" + content_type + "\n" + date + "\n" + canonicalized_resource
     )
-
     hmac_obj = hmac.new(
         config["secret"].encode("utf-8"),
         msg=encrypt_str.encode("utf-8"),
@@ -70,7 +60,6 @@ def prepare_header(config: dict[str, str], body: str, canonicalized_resource: st
     )
     sign = base64.b64encode(hmac_obj.digest())
     authorization = "API " + str(config["key_id"]) + ":" + sign.decode("utf-8")
-
     return {
         "Content-MD5": content_md5,
         "Content-Type": content_type,
@@ -78,11 +67,9 @@ def prepare_header(config: dict[str, str], body: str, canonicalized_resource: st
         "Authorization": authorization,
     }
 
-
 def _clean_json_text(text: str) -> str:
     # SolisCloud sometimes returns JSON with trailing commas.
-    return re.sub(r'("(?:\\?.)*?")|,\s*([]}])', r"\1\2", text)
-
+    return re.sub(r'("(?:\\?.)*?")|,\s*([}\]])', r"\1\2", text)
 
 # -----------------------------
 # Legacy CID103 payload builder (3-slot)
@@ -98,7 +85,6 @@ def legacy_control_body(inverterId, chargeSettings) -> str:
         )
     value = ",".join(parts)
     return f'{{"inverterId":"{inverterId}", "cid":"{LEGACY_SCHEDULE_CID}","value":"{value}"}}'
-
 
 # -----------------------------
 # Dispatch window processing (your logic; slot-count aware)
@@ -133,7 +119,6 @@ class WindowProcessor:
     def round_to_slot(self, dt: datetime, is_end_time: bool = False) -> datetime:
         result = dt.replace(second=0, microsecond=0)
         minute = result.minute
-
         if is_end_time:
             if minute > 0:
                 if minute <= 30:
@@ -143,7 +128,6 @@ class WindowProcessor:
                     result = result.replace(minute=0)
         else:
             result = result.replace(minute=(minute // 30) * 30)
-
         return result
 
     def normalize_dispatch(self, dispatch: dict) -> dict:
@@ -168,7 +152,7 @@ class WindowProcessor:
         valid = []
         for d in dispatches:
             valid.append(self.normalize_dispatch(d))
-        
+
         # Sort by start time manually (PyScript lambda support is unreliable)
         # Bubble sort for simplicity and PyScript compatibility
         for i in range(len(valid)):
@@ -197,7 +181,6 @@ class WindowProcessor:
         while True:
             changes = False
             remaining = []
-
             for window in self.dispatch_blocks:
                 overlaps = (
                     window["start"] <= self.core_window["end"]
@@ -212,7 +195,6 @@ class WindowProcessor:
                         changes = True
                 else:
                     remaining.append(window)
-
             self.dispatch_blocks = remaining
             if not changes:
                 break
@@ -222,7 +204,7 @@ class WindowProcessor:
             return []
 
         blocks = self.dispatch_blocks.copy()
-        
+
         # Sort by duration (longest first) - manual sort for PyScript compatibility
         for i in range(len(blocks)):
             for j in range(len(blocks) - 1 - i):
@@ -267,7 +249,6 @@ class WindowProcessor:
 
         return windows[:self.max_slots]
 
-
 # -----------------------------
 # SolisCloud I/O helpers
 # -----------------------------
@@ -278,11 +259,9 @@ async def solis_post(session, config, url_path, body_dict, token=None):
         headers["token"] = token
     return await session.post(BASE_URL + url_path, data=body, headers=headers)
 
-
 async def resp_json(resp):
     text = await resp.text()
     return json.loads(_clean_json_text(text))
-
 
 async def get_control_value(session, config, token, inverter_sn, cid, retries):
     for attempt in range(1, retries + 1):
@@ -297,7 +276,6 @@ async def get_control_value(session, config, token, inverter_sn, cid, retries):
             log.warning("AT_READ cid=%s attempt %s/%s http=%s", cid, attempt, retries, r.status)
             await asyncio.sleep(0.2)
             continue
-
         try:
             data = await resp_json(r)
             if str(data.get("code")) != "0":
@@ -308,15 +286,11 @@ async def get_control_value(session, config, token, inverter_sn, cid, retries):
                 return payload[0]
         except Exception as e:
             log.warning("AT_READ cid=%s attempt %s/%s parse error: %s", cid, attempt, retries, e)
-
-        await asyncio.sleep(0.2)
-
+            await asyncio.sleep(0.2)
     return None
-
 
 async def write_control(session, config, token, inverter_sn, cid, value, retries, delay, verify):
     last_text = None
-
     for attempt in range(1, retries + 1):
         r = await solis_post(
             session,
@@ -334,7 +308,6 @@ async def write_control(session, config, token, inverter_sn, cid, value, retries
             log.warning("CONTROL cid=%s attempt %s/%s http=%s", cid, attempt, retries, r.status)
             await asyncio.sleep(0.3)
             continue
-
         try:
             data = json.loads(_clean_json_text(last_text or ""))
             if str(data.get("code")) == "0":
@@ -347,12 +320,10 @@ async def write_control(session, config, token, inverter_sn, cid, value, retries
                     return True
         except Exception as e:
             log.warning("CONTROL cid=%s attempt %s/%s parse error: %s", cid, attempt, retries, e)
-
-        await asyncio.sleep(0.3)
+            await asyncio.sleep(0.3)
 
     log.error("CONTROL cid=%s failed after %s attempts. Last response: %s", cid, retries, last_text)
     return False
-
 
 # -----------------------------
 # Service: same name as your original for drop-in replacement
@@ -367,13 +338,12 @@ async def solis_smart_charging(config=None):
         config = json.loads(config)
 
     required_keys = ["secret", "key_id", "username", "password", "plantId", "dispatch_sensor"]
-    
+
     # Check for missing keys (PyScript doesn't support list comprehensions in some contexts)
     missing = []
     for k in required_keys:
         if k not in config:
             missing.append(k)
-    
     if missing:
         log.error("Missing required configuration keys: %s", ", ".join(missing))
         return
@@ -381,7 +351,6 @@ async def solis_smart_charging(config=None):
     # Configuration parameters
     diagnostics_only = bool(config.get("diagnostics_only", False))
     force_mode = str(config.get("force_mode", "auto")).lower()  # legacy | six_slot | auto
-
     max_slots = int(config.get("max_slots", 3))
     control_retries = int(config.get("control_retries", 3))
     control_delay = float(config.get("control_delay", 0.1))
@@ -398,10 +367,34 @@ async def solis_smart_charging(config=None):
     charge_current_value = str(config.get("charge_current", "60"))
     charge_soc_value = str(config.get("charge_soc", "100"))
 
-    log.info("=== Solis Smart Charging v4.0.0 ===")
-    log.info("Configuration: diagnostics_only=%s, force_mode=%s, max_slots=%s", 
+    log.info("=== Solis Smart Charging v4.0.1 ===")
+    log.info("Configuration: diagnostics_only=%s, force_mode=%s, max_slots=%s",
              diagnostics_only, force_mode, max_slots)
     log.info("Time sync: enabled=%s, timezone=%s", sync_inverter_time, inverter_timezone)
+
+    # ------------------------------------------------------------------
+    # DISPATCH SENSOR VALIDATION (v4.0.1)
+    # Validate early so we fail fast with a clear message rather than
+    # silently falling back to core-only after a full API login.
+    # ------------------------------------------------------------------
+    dispatch_sensor = str(config["dispatch_sensor"])
+    dispatch_entity_state = hass.states.get(dispatch_sensor)
+    if dispatch_entity_state is None:
+        log.error(
+            "Dispatch sensor '%s' not found in Home Assistant. "
+            "Check your dispatch_sensor config value. "
+            "The entity ID varies by how Octopus Intelligent is set up: "
+            "for account-linked chargers it is typically "
+            "'binary_sensor.octopus_energy_<ACCOUNT_ID>_intelligent_dispatching'; "
+            "for EV charger integrations (Hypervolt, Ohme, etc.) it may be "
+            "'binary_sensor.octopus_energy_<EV_SERIAL>_intelligent_dispatching'. "
+            "Go to Developer Tools -> States in Home Assistant and search "
+            "'intelligent_dispatching' to find the correct entity for your setup.",
+            dispatch_sensor
+        )
+        return "Dispatch sensor not found - check configuration"
+
+    log.info("Dispatch sensor '%s' found (state: %s)", dispatch_sensor, dispatch_entity_state.state)
 
     session = async_get_clientsession(hass)
 
@@ -411,11 +404,13 @@ async def solis_smart_charging(config=None):
     if login_resp.status != HTTPStatus.OK:
         log.error("Login failed with status %s", login_resp.status)
         return
+
     login_data = await resp_json(login_resp)
     token = login_data.get("csrfToken")
     if not token:
         log.error("Login succeeded but csrfToken missing: %s", login_data)
         return
+
     log.info("Login successful, token obtained")
 
     # Inverter list
@@ -423,7 +418,7 @@ async def solis_smart_charging(config=None):
     if inv_list_resp.status != HTTPStatus.OK:
         log.error("inverterList failed status %s", inv_list_resp.status)
         return
-    
+
     try:
         inv_list_data = await resp_json(inv_list_resp)
     except Exception as e:
@@ -433,7 +428,7 @@ async def solis_smart_charging(config=None):
     if not isinstance(inv_list_data, dict):
         log.error("Unexpected inverter data format: %s", type(inv_list_data))
         return
-    
+
     if 'data' not in inv_list_data:
         log.error("No 'data' field in inverter response: %s", inv_list_data)
         return
@@ -442,13 +437,13 @@ async def solis_smart_charging(config=None):
     if not records:
         log.error("No inverters returned from inverterList")
         return
-    
+
     log.info("Found %s inverter(s) in plant", len(records))
 
     # Multi-inverter selection logic (v3.2.0 enhanced)
     cfg_sn = str(config.get("inverter_sn", "")).strip()
     cfg_id = str(config.get("inverter_id", "")).strip()
-    
+
     # Handle undefined secrets (v3.2.0 feature)
     if cfg_sn.lower() in ("unknown", "unavailable", "none"):
         cfg_sn = ""
@@ -467,13 +462,12 @@ async def solis_smart_charging(config=None):
                 chosen = r
                 log.info("Matched inverter by ID: %s", cfg_id)
                 break
-        
         if not chosen:
             log.error("Configured inverter_sn/inverter_id not found in inverterList")
             log.error("Available inverters:")
             for r in records:
-                log.error("  - ID: %s, SN: %s, Name: %s, ProductModel: %s", 
-                         r.get("id"), r.get("sn"), r.get("name"), r.get("productModel"))
+                log.error("  - ID: %s, SN: %s, Name: %s, ProductModel: %s",
+                           r.get("id"), r.get("sn"), r.get("name"), r.get("productModel"))
             return
     else:
         # Auto-selection logic - filter for storage inverters (PyScript doesn't support list comprehensions in some contexts)
@@ -481,7 +475,7 @@ async def solis_smart_charging(config=None):
         for r in records:
             if str(r.get("productModel")) == "2":
                 storage_records.append(r)
-        
+
         if len(storage_records) == 1:
             chosen = storage_records[0]
             log.info("Auto-selected storage inverter (ProductModel=2)")
@@ -490,18 +484,18 @@ async def solis_smart_charging(config=None):
             log.error("Available storage inverters:")
             for r in storage_records:
                 log.error("  - ID: %s, SN: %s, Name: %s, ProductModel: %s",
-                         r.get("id"), r.get("sn"), r.get("name"), r.get("productModel"))
+                           r.get("id"), r.get("sn"), r.get("name"), r.get("productModel"))
             return
         elif len(records) == 1:
             chosen = records[0]
             log.info("Only one inverter found, using ID=%s, SN=%s, Name=%s",
-                    chosen.get("id"), chosen.get("sn"), chosen.get("name"))
+                     chosen.get("id"), chosen.get("sn"), chosen.get("name"))
         else:
             log.error("Multiple inverters found but none identified as storage (ProductModel=2)")
             log.error("Available inverters:")
             for r in records:
                 log.error("  - ID: %s, SN: %s, Name: %s, ProductModel: %s",
-                         r.get("id"), r.get("sn"), r.get("name"), r.get("productModel"))
+                           r.get("id"), r.get("sn"), r.get("name"), r.get("productModel"))
             return
 
     inverter_id = chosen.get("id")
@@ -519,7 +513,6 @@ async def solis_smart_charging(config=None):
     if sync_inverter_time:
         try:
             log.info("Syncing inverter time (CID 56)...")
-            
             # Get timezone-aware current time
             try:
                 from zoneinfo import ZoneInfo
@@ -528,32 +521,29 @@ async def solis_smart_charging(config=None):
             except Exception as e:
                 log.warning("Invalid timezone '%s': %s, falling back to UTC", inverter_timezone, e)
                 inverter_tz = timezone.utc
-            
+
             current_time = datetime.now(inverter_tz)
             time_value = current_time.strftime("%Y-%m-%d %H:%M:%S")
-            
             time_sync_body = f'{{"inverterId":"{inverter_id}","cid":"56","value":"{time_value}"}}'
             time_headers = prepare_header(config, time_sync_body, CONTROL_URL)
             time_headers["token"] = token
-            
+
             log.debug("Time sync payload: %s", time_sync_body)
-            
             time_resp = await session.post(BASE_URL + CONTROL_URL, data=time_sync_body, headers=time_headers)
-            
+
             if time_resp.status == HTTPStatus.OK:
                 try:
                     time_data = await resp_json(time_resp)
                     if str(time_data.get("code")) == "0":
-                        log.info("Successfully synced inverter time to %s (%s)", 
-                                time_value, inverter_timezone)
+                        log.info("Successfully synced inverter time to %s (%s)",
+                                 time_value, inverter_timezone)
                     else:
-                        log.warning("Time sync returned code: %s, msg: %s", 
-                                   time_data.get("code"), time_data.get("msg"))
+                        log.warning("Time sync returned code: %s, msg: %s",
+                                    time_data.get("code"), time_data.get("msg"))
                 except Exception as e:
                     log.warning("Failed to parse time sync response: %s", e)
             else:
                 log.warning("Time sync HTTP status: %s", time_resp.status)
-                
         except Exception as e:
             log.error("Time sync failed: %s", e)
             # Don't abort - continue with schedule programming
@@ -581,7 +571,6 @@ async def solis_smart_charging(config=None):
         if detail_resp.status == HTTPStatus.OK:
             detail = await resp_json(detail_resp)
             payload = detail.get("data")
-
             if isinstance(payload, dict):
                 hmi_version = payload.get("hmiVersionAll") or payload.get("hmi_version_all")
             elif isinstance(payload, list) and payload and isinstance(payload[0], dict):
@@ -591,15 +580,39 @@ async def solis_smart_charging(config=None):
                 try:
                     hmi_int = int(str(hmi_version), 16)
                     is_six_slot = hmi_int >= int("4b00", 16)
-                    log.info("HMI version detected: %s (decimal: %s, six_slot: %s)", 
-                            hmi_version, hmi_int, is_six_slot)
+                    log.info("HMI version detected: %s (decimal: %s, six_slot: %s)",
+                             hmi_version, hmi_int, is_six_slot)
+                    if not is_six_slot:
+                        log.warning(
+                            "HMI version %s (decimal: %s) is below the 6-slot threshold "
+                            "(0x4B00 / decimal 19200). Defaulting to legacy 3-slot mode. "
+                            "If your inverter does support 6 charging slots, add "
+                            "\"force_mode\": \"six_slot\" and \"max_slots\": 6 to your "
+                            "automation config to override auto-detection.",
+                            hmi_version, hmi_int
+                        )
                 except Exception as e:
                     log.warning("Could not parse HMI version '%s': %s", hmi_version, e)
+                    log.warning(
+                        "Unable to determine firmware mode from HMI version '%s'. "
+                        "Defaulting to legacy 3-slot mode. "
+                        "Override with \"force_mode\": \"six_slot\" if your firmware supports 6 slots.",
+                        hmi_version
+                    )
                     is_six_slot = False
             else:
-                log.warning("HMI version not found in inverter detail")
+                log.warning(
+                    "HMI version not found in inverter detail response. "
+                    "Defaulting to legacy 3-slot mode. "
+                    "If your inverter supports 6 charging slots, add "
+                    "\"force_mode\": \"six_slot\" and \"max_slots\": 6 to your automation config."
+                )
         else:
-            log.warning("inverterDetail failed http=%s; defaulting to legacy", detail_resp.status)
+            log.warning(
+                "inverterDetail request failed (http=%s); defaulting to legacy 3-slot mode. "
+                "Override with \"force_mode\": \"six_slot\" if your firmware supports it.",
+                detail_resp.status
+            )
 
     # If six-slot detected, ensure max_slots at least 6
     if is_six_slot and max_slots < 6:
@@ -611,28 +624,38 @@ async def solis_smart_charging(config=None):
 
     # Process dispatch windows
     processor = WindowProcessor(max_slots=max_slots)
-    dispatch_sensor = str(config["dispatch_sensor"])
 
     try:
         dispatches = state.getattr(dispatch_sensor)
         if dispatches and "planned_dispatches" in dispatches:
-            log.info("Processing %s planned dispatches from %s", 
-                    len(dispatches["planned_dispatches"]), dispatch_sensor)
+            log.info("Processing %s planned dispatches from %s",
+                     len(dispatches["planned_dispatches"]), dispatch_sensor)
             processor.normalize_dispatches(dispatches["planned_dispatches"])
             processor.process_core_hours()
             additional = processor.select_additional_windows()
             windows = processor.format_windows(additional)
-            
             # Count non-empty windows (PyScript doesn't support list comprehensions in some contexts)
             non_empty_count = 0
             for w in windows:
                 if w["chargeStartTime"] != "00:00":
                     non_empty_count += 1
-            
-            log.info("Calculated %s charging windows (core + %s additional)", 
-                    non_empty_count, len(additional))
+            log.info("Calculated %s charging windows (core + %s additional)",
+                     non_empty_count, len(additional))
+        elif dispatches is not None and "planned_dispatches" not in dispatches:
+            log.warning(
+                "Dispatch sensor '%s' exists but has no 'planned_dispatches' attribute "
+                "(sensor state: '%s'). Octopus may not have issued any dispatch periods yet, "
+                "or the Octopus Energy integration may not be fully initialised. "
+                "Using core charging window only.",
+                dispatch_sensor, dispatch_entity_state.state
+            )
+            windows = processor.format_windows([])
         else:
-            log.warning("No planned dispatches found, using core window only")
+            log.warning(
+                "No attributes found on dispatch sensor '%s' (state: '%s'). "
+                "Using core charging window only.",
+                dispatch_sensor, dispatch_entity_state.state
+            )
             windows = processor.format_windows([])
     except Exception as e:
         log.error("Error processing dispatch windows: %s", e)
@@ -641,9 +664,9 @@ async def solis_smart_charging(config=None):
     # Log calculated windows for debugging
     for i, w in enumerate(windows):
         if w["chargeStartTime"] != "00:00" or w["chargeEndTime"] != "00:00":
-            log.debug("Window %s: charge %s-%s, discharge %s-%s", 
-                     i + 1, w["chargeStartTime"], w["chargeEndTime"],
-                     w["dischargeStartTime"], w["dischargeEndTime"])
+            log.debug("Window %s: charge %s-%s, discharge %s-%s",
+                      i + 1, w["chargeStartTime"], w["chargeEndTime"],
+                      w["dischargeStartTime"], w["dischargeEndTime"])
 
     # Skip update if unchanged (length-aware; compares key fields)
     current_state = hass.states.get("sensor.solis_charge_schedule")
@@ -653,7 +676,7 @@ async def solis_smart_charging(config=None):
         if same:
             for n, o in zip(windows, existing):
                 for k in ("chargeStartTime", "chargeEndTime", "dischargeStartTime", "dischargeEndTime",
-                          "chargeCurrent", "dischargeCurrent"):
+                           "chargeCurrent", "dischargeCurrent"):
                     if str(n.get(k)) != str(o.get(k)):
                         same = False
                         break
@@ -699,19 +722,18 @@ async def solis_smart_charging(config=None):
 
         if diagnostics_only:
             log.warning("=== DIAGNOSTICS MODE: Not writing to inverter ===")
-            
             # Build schedule text (PyScript doesn't support generator expressions)
             schedule_parts = []
             for w in windows:
                 if w["chargeStartTime"] != "00:00" or w["chargeEndTime"] != "00:00":
                     schedule_parts.append(f"{w['chargeStartTime']}-{w['chargeEndTime']}")
             schedule_text = ", ".join(schedule_parts)
-            
+
             # Build operations list (PyScript doesn't support list comprehensions in some contexts)
             operations_list = []
             for k, s, c, v in ops:
                 operations_list.append({"type": k, "slot": s, "cid": c, "value": v})
-            
+
             hass.states.async_set(
                 "sensor.solis_charge_schedule",
                 schedule_text if schedule_text else "diagnostics_only",
@@ -733,7 +755,6 @@ async def solis_smart_charging(config=None):
         log.info("=== Executing six-slot control writes ===")
         ok = True
         failed_ops = []
-        
         for kind, slot, cid, val in ops:
             log.info("Writing: %s slot_%s CID=%s value='%s'", kind, slot, cid, val)
             success = await write_control(
@@ -753,14 +774,13 @@ async def solis_smart_charging(config=None):
                 log.error("FAILED: %s slot_%s CID=%s", kind, slot, cid)
             else:
                 log.info("SUCCESS: %s slot_%s CID=%s", kind, slot, cid)
-            
             await asyncio.sleep(inter_write_delay)
 
         if failed_ops:
             log.error("=== Six-slot update completed with %s failures ===", len(failed_ops))
             for op in failed_ops:
-                log.error("  Failed: %s slot_%s CID=%s value='%s'", 
-                         op["type"], op["slot"], op["cid"], op["value"])
+                log.error("  Failed: %s slot_%s CID=%s value='%s'",
+                           op["type"], op["slot"], op["cid"], op["value"])
         else:
             log.info("=== Six-slot update completed successfully ===")
 
@@ -786,7 +806,6 @@ async def solis_smart_charging(config=None):
                 "timezone": inverter_timezone,
             },
         )
-
         return "six_slot update complete" if ok else f"six_slot update had {len(failed_ops)} failures"
 
     # Legacy: send CID103 (always 3 windows)
@@ -800,14 +819,13 @@ async def solis_smart_charging(config=None):
 
     if diagnostics_only:
         log.warning("=== DIAGNOSTICS MODE: Not writing to inverter ===")
-        
         # Build schedule text (PyScript doesn't support generator expressions)
         schedule_parts = []
         for w in legacy_windows:
             if w["chargeStartTime"] != "00:00" or w["chargeEndTime"] != "00:00":
                 schedule_parts.append(f"{w['chargeStartTime']}-{w['chargeEndTime']}")
         schedule_text = ", ".join(schedule_parts)
-        
+
         hass.states.async_set(
             "sensor.solis_charge_schedule",
             schedule_text if schedule_text else "diagnostics_only",
@@ -829,7 +847,6 @@ async def solis_smart_charging(config=None):
     log.info("=== Executing legacy CID 103 write ===")
     resp = await session.post(BASE_URL + CONTROL_URL, data=control_data, headers=control_headers)
     resp_text = await resp.text()
-    
     log.info("Solis API response status: %s", resp.status)
     log.debug("Solis API response body: %s", resp_text)
 
@@ -854,6 +871,5 @@ async def solis_smart_charging(config=None):
             "timezone": inverter_timezone,
         },
     )
-
     log.info("=== Legacy update complete ===")
     return resp_text
